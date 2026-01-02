@@ -1,0 +1,224 @@
+[0.008s] Invoking command in '/home/robotics/fast_lio_ws/build/livox_ros_driver2': CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:/opt/ros/humble /usr/local/bin/cmake /home/robotics/fast_lio_ws/src/FAST_LIO_LOCALIZATION_HUMANOID/livox_ros_driver2 -DAMENT_CMAKE_SYMLINK_INSTALL=1 -DCMAKE_INSTALL_PREFIX=/home/robotics/fast_lio_ws/install/livox_ros_driver2
+[0.034s] -- The C compiler identification is GNU 11.4.0
+[0.064s] -- The CXX compiler identification is GNU 11.4.0
+[0.069s] -- Detecting C compiler ABI info
+[0.103s] -- Detecting C compiler ABI info - done
+[0.113s] -- Check for working C compiler: /usr/bin/cc - skipped
+[0.113s] -- Detecting C compile features
+[0.113s] -- Detecting C compile features - done
+[0.120s] -- Detecting CXX compiler ABI info
+[0.156s] -- Detecting CXX compiler ABI info - done
+[0.161s] -- Check for working CXX compiler: /usr/bin/c++ - skipped
+[0.162s] -- Detecting CXX compile features
+[0.162s] -- Detecting CXX compile features - done
+[0.165s] -- livox_ros_driver2 version: 1.2.4
+[0.165s] -- Found ament_cmake_auto: 1.3.12 (/opt/ros/humble/share/ament_cmake_auto/cmake)
+[0.233s] -- Found Python3: /usr/bin/python3 (found version "3.10.12") found components: Interpreter
+[0.261s] -- Override CMake install command with custom implementation using symlinks instead of copying resources
+[0.300s] -- Using all available rosidl_typesupport_c: rosidl_typesupport_fastrtps_c;rosidl_typesupport_introspection_c
+[0.302s] -- Found rosidl_adapter: 3.1.7 (/opt/ros/humble/share/rosidl_adapter/cmake)
+[0.319s] -- Using all available rosidl_typesupport_cpp: rosidl_typesupport_fastrtps_cpp;rosidl_typesupport_introspection_cpp
+[0.356s] -- Found rmw_implementation_cmake: 6.1.2 (/opt/ros/humble/share/rmw_implementation_cmake/cmake)
+[0.358s] -- Found rmw_fastrtps_cpp: 6.2.9 (/opt/ros/humble/share/rmw_fastrtps_cpp/cmake)
+[0.398s] -- Found OpenSSL: /usr/lib/x86_64-linux-gnu/libcrypto.so (found version "3.0.2")
+[0.410s] -- Found FastRTPS: /opt/ros/humble/include
+[0.429s] -- Using RMW implementation 'rmw_fastrtps_cpp' as default
+[0.432s] -- Performing Test CMAKE_HAVE_LIBC_PTHREAD
+[0.472s] -- Performing Test CMAKE_HAVE_LIBC_PTHREAD - Success
+[0.472s] -- Found Threads: TRUE
+[0.551s] [33mCMake Warning (dev) at /usr/lib/x86_64-linux-gnu/cmake/pcl/PCLConfig.cmake:146 (find_package):
+[0.551s]   Policy CMP0144 is not set: find_package uses upper-case <PACKAGENAME>_ROOT
+[0.551s]   variables.  Run "cmake --help-policy CMP0144" for policy details.  Use the
+[0.551s]   cmake_policy command to set the policy and suppress this warning.
+[0.551s] 
+[0.551s]   CMake variable EIGEN_ROOT is set to:
+[0.551s] 
+[0.551s]     /usr/include/eigen3
+[0.551s] 
+[0.551s]   For compatibility, find_package is ignoring the variable, but code in a
+[0.551s]   .cmake module might still use it.
+[0.551s] Call Stack (most recent call first):
+[0.551s]   /usr/lib/x86_64-linux-gnu/cmake/pcl/PCLConfig.cmake:299 (find_eigen)
+[0.551s]   /usr/lib/x86_64-linux-gnu/cmake/pcl/PCLConfig.cmake:543 (find_external_library)
+[0.551s]   /opt/ros/humble/share/pcl_conversions/cmake/ament_cmake_export_dependencies-extras.cmake:21 (find_package)
+[0.551s]   /opt/ros/humble/share/pcl_conversions/cmake/pcl_conversionsConfig.cmake:41 (include)
+[0.551s]   /opt/ros/humble/share/ament_cmake_auto/cmake/ament_auto_find_build_dependencies.cmake:67 (find_package)
+[0.551s]   CMakeLists.txt:225 (ament_auto_find_build_dependencies)
+[0.551s] This warning is for project developers.  Use -Wno-dev to suppress it.
+[0.551s] [0m
+[0.552s] -- Checking for module 'eigen3'
+[0.563s] --   Found eigen3, version 3.4.0
+[0.580s] -- Found Eigen: /usr/include/eigen3 (Required is at least version "3.1")
+[0.580s] -- Eigen found (include: /usr/include/eigen3, version: 3.4.0)
+[0.580s] [33mCMake Warning (dev) at /usr/lib/x86_64-linux-gnu/cmake/pcl/PCLConfig.cmake:128 (find_package):
+[0.581s]   Policy CMP0167 is not set: The FindBoost module is removed.  Run "cmake
+[0.581s]   --help-policy CMP0167" for policy details.  Use the cmake_policy command to
+[0.581s]   set the policy and suppress this warning.
+[0.581s] 
+[0.581s] Call Stack (most recent call first):
+[0.581s]   /usr/lib/x86_64-linux-gnu/cmake/pcl/PCLConfig.cmake:297 (find_boost)
+[0.581s]   /usr/lib/x86_64-linux-gnu/cmake/pcl/PCLConfig.cmake:543 (find_external_library)
+[0.581s]   /opt/ros/humble/share/pcl_conversions/cmake/ament_cmake_export_dependencies-extras.cmake:21 (find_package)
+[0.581s]   /opt/ros/humble/share/pcl_conversions/cmake/pcl_conversionsConfig.cmake:41 (include)
+[0.581s]   /opt/ros/humble/share/ament_cmake_auto/cmake/ament_auto_find_build_dependencies.cmake:67 (find_package)
+[0.581s]   CMakeLists.txt:225 (ament_auto_find_build_dependencies)
+[0.581s] This warning is for project developers.  Use -Wno-dev to suppress it.
+[0.581s] [0m
+[0.589s] [33mCMake Warning (dev) at /usr/lib/x86_64-linux-gnu/cmake/pcl/Modules/FindFLANN.cmake:44 (find_package):
+[0.589s]   Policy CMP0144 is not set: find_package uses upper-case <PACKAGENAME>_ROOT
+[0.589s]   variables.  Run "cmake --help-policy CMP0144" for policy details.  Use the
+[0.589s]   cmake_policy command to set the policy and suppress this warning.
+[0.589s] 
+[0.589s]   CMake variable FLANN_ROOT is set to:
+[0.589s] 
+[0.589s]     /usr
+[0.589s] 
+[0.589s]   For compatibility, find_package is ignoring the variable, but code in a
+[0.589s]   .cmake module might still use it.
+[0.589s] Call Stack (most recent call first):
+[0.589s]   /usr/lib/x86_64-linux-gnu/cmake/pcl/PCLConfig.cmake:256 (find_package)
+[0.589s]   /usr/lib/x86_64-linux-gnu/cmake/pcl/PCLConfig.cmake:301 (find_flann)
+[0.589s]   /usr/lib/x86_64-linux-gnu/cmake/pcl/PCLConfig.cmake:543 (find_external_library)
+[0.589s]   /opt/ros/humble/share/pcl_conversions/cmake/ament_cmake_export_dependencies-extras.cmake:21 (find_package)
+[0.589s]   /opt/ros/humble/share/pcl_conversions/cmake/pcl_conversionsConfig.cmake:41 (include)
+[0.589s]   /opt/ros/humble/share/ament_cmake_auto/cmake/ament_auto_find_build_dependencies.cmake:67 (find_package)
+[0.590s]   CMakeLists.txt:225 (ament_auto_find_build_dependencies)
+[0.590s] This warning is for project developers.  Use -Wno-dev to suppress it.
+[0.590s] [0m
+[0.594s] -- Checking for module 'flann'
+[0.603s] --   Found flann, version 1.9.1
+[0.621s] -- Found FLANN: /usr/lib/x86_64-linux-gnu/libflann_cpp.so
+[0.621s] -- FLANN found (include: /usr/include, lib: /usr/lib/x86_64-linux-gnu/libflann_cpp.so)
+[1.130s] -- Checking for module 'libusb-1.0'
+[1.137s] --   Found libusb-1.0, version 1.0.25
+[1.157s] -- Found libusb: /usr/lib/x86_64-linux-gnu/libusb-1.0.so
+[1.157s] -- OpenNI found (version: 1.5.4.0, include: /usr/include/ni, lib: /usr/lib/libOpenNI.so;libusb::libusb)
+[1.183s] -- OpenNI2 found (version: 2.2.0.33, include: /usr/include/openni2, lib: /usr/lib/x86_64-linux-gnu/libOpenNI2.so;libusb::libusb)
+[1.280s] [33mCMake Warning (dev) at /usr/lib/x86_64-linux-gnu/cmake/pcl/PCLConfig.cmake:128 (find_package):
+[1.280s]   Policy CMP0167 is not set: The FindBoost module is removed.  Run "cmake
+[1.280s]   --help-policy CMP0167" for policy details.  Use the cmake_policy command to
+[1.280s]   set the policy and suppress this warning.
+[1.280s] 
+[1.280s] Call Stack (most recent call first):
+[1.280s]   /usr/lib/x86_64-linux-gnu/cmake/pcl/PCLConfig.cmake:297 (find_boost)
+[1.280s]   /usr/lib/x86_64-linux-gnu/cmake/pcl/PCLConfig.cmake:543 (find_external_library)
+[1.281s]   /opt/ros/humble/share/pcl_conversions/cmake/ament_cmake_export_dependencies-extras.cmake:21 (find_package)
+[1.281s]   /opt/ros/humble/share/pcl_conversions/cmake/pcl_conversionsConfig.cmake:41 (include)
+[1.281s]   /opt/ros/humble/share/ament_cmake_auto/cmake/ament_auto_find_build_dependencies.cmake:67 (find_package)
+[1.281s]   CMakeLists.txt:225 (ament_auto_find_build_dependencies)
+[1.281s] This warning is for project developers.  Use -Wno-dev to suppress it.
+[1.281s] [0m
+[1.285s] -- Eigen found (include: /usr/include/eigen3, version: 3.4.0)
+[1.288s] -- OpenNI found (version: 1.5.4.0, include: /usr/include/ni, lib: /usr/lib/libOpenNI.so;libusb::libusb)
+[1.292s] -- OpenNI2 found (version: 2.2.0.33, include: /usr/include/openni2, lib: /usr/lib/x86_64-linux-gnu/libOpenNI2.so;libusb::libusb)
+[1.390s] -- Found Qhull version 8.0.2
+[1.488s] -- OpenNI found (version: 1.5.4.0, include: /usr/include/ni, lib: /usr/lib/libOpenNI.so;libusb::libusb)
+[1.586s] -- Found PCL_COMMON: /usr/lib/x86_64-linux-gnu/libpcl_common.so
+[1.586s] -- Found PCL_KDTREE: /usr/lib/x86_64-linux-gnu/libpcl_kdtree.so
+[1.586s] -- Found PCL_OCTREE: /usr/lib/x86_64-linux-gnu/libpcl_octree.so
+[1.588s] -- Found PCL_SEARCH: /usr/lib/x86_64-linux-gnu/libpcl_search.so
+[1.588s] -- Found PCL_SAMPLE_CONSENSUS: /usr/lib/x86_64-linux-gnu/libpcl_sample_consensus.so
+[1.588s] -- Found PCL_FILTERS: /usr/lib/x86_64-linux-gnu/libpcl_filters.so
+[1.588s] -- Found PCL_2D: /usr/include/pcl-1.12
+[1.588s] -- Found PCL_GEOMETRY: /usr/include/pcl-1.12
+[1.589s] -- Found PCL_IO: /usr/lib/x86_64-linux-gnu/libpcl_io.so
+[1.589s] -- Found PCL_FEATURES: /usr/lib/x86_64-linux-gnu/libpcl_features.so
+[1.590s] -- Found PCL_ML: /usr/lib/x86_64-linux-gnu/libpcl_ml.so
+[1.590s] -- Found PCL_SEGMENTATION: /usr/lib/x86_64-linux-gnu/libpcl_segmentation.so
+[1.590s] -- Found PCL_VISUALIZATION: /usr/lib/x86_64-linux-gnu/libpcl_visualization.so
+[1.591s] -- Found PCL_SURFACE: /usr/lib/x86_64-linux-gnu/libpcl_surface.so
+[1.591s] -- Found PCL_REGISTRATION: /usr/lib/x86_64-linux-gnu/libpcl_registration.so
+[1.592s] -- Found PCL_KEYPOINTS: /usr/lib/x86_64-linux-gnu/libpcl_keypoints.so
+[1.592s] -- Found PCL_TRACKING: /usr/lib/x86_64-linux-gnu/libpcl_tracking.so
+[1.593s] -- Found PCL_RECOGNITION: /usr/lib/x86_64-linux-gnu/libpcl_recognition.so
+[1.593s] -- Found PCL_STEREO: /usr/lib/x86_64-linux-gnu/libpcl_stereo.so
+[1.594s] -- Found PCL_APPS: /usr/lib/x86_64-linux-gnu/libpcl_apps.so
+[1.594s] -- Found PCL_IN_HAND_SCANNER: /usr/include/pcl-1.12
+[1.594s] -- Found PCL_MODELER: /usr/include/pcl-1.12
+[1.595s] -- Found PCL_POINT_CLOUD_EDITOR: /usr/include/pcl-1.12
+[1.595s] -- Found PCL_OUTOFCORE: /usr/lib/x86_64-linux-gnu/libpcl_outofcore.so
+[1.596s] -- Found PCL_PEOPLE: /usr/lib/x86_64-linux-gnu/libpcl_people.so
+[1.614s] -- Found PkgConfig: /usr/bin/pkg-config (found version "0.29.2")
+[1.614s] -- Checking for module 'apr-1'
+[1.624s] --   Found apr-1, version 1.7.0
+[1.642s] [0m/usr/include/apr-1.0[0m
+[1.642s] [0mapr-1[0m
+[1.816s] -- Found ament_cmake_ros: 0.10.0 (/opt/ros/humble/share/ament_cmake_ros/cmake)
+[2.027s] -- Using all available rosidl_typesupport_c: rosidl_typesupport_fastrtps_c;rosidl_typesupport_introspection_c
+[2.305s] -- Using all available rosidl_typesupport_cpp: rosidl_typesupport_fastrtps_cpp;rosidl_typesupport_introspection_cpp
+[2.307s] [33mCMake Warning (dev) at /opt/ros/humble/share/rosidl_generator_py/cmake/rosidl_generator_py_generate_interfaces.cmake:20 (find_package):
+[2.307s]   Policy CMP0148 is not set: The FindPythonInterp and FindPythonLibs modules
+[2.307s]   are removed.  Run "cmake --help-policy CMP0148" for policy details.  Use
+[2.307s]   the cmake_policy command to set the policy and suppress this warning.
+[2.307s] 
+[2.307s] Call Stack (most recent call first):
+[2.307s]   /opt/ros/humble/share/ament_cmake_core/cmake/core/ament_execute_extensions.cmake:48 (include)
+[2.307s]   /opt/ros/humble/share/rosidl_cmake/cmake/rosidl_generate_interfaces.cmake:286 (ament_execute_extensions)
+[2.307s]   CMakeLists.txt:241 (rosidl_generate_interfaces)
+[2.307s] This warning is for project developers.  Use -Wno-dev to suppress it.
+[2.307s] [0m
+[2.316s] -- Found PythonInterp: /usr/bin/python3 (found suitable version "3.10.12", minimum required is "3.6")
+[2.318s] -- Found python_cmake_module: 0.10.0 (/opt/ros/humble/share/python_cmake_module/cmake)
+[2.318s] [33mCMake Warning (dev) at /opt/ros/humble/share/python_cmake_module/cmake/Modules/FindPythonExtra.cmake:52 (find_package):
+[2.318s]   Policy CMP0148 is not set: The FindPythonInterp and FindPythonLibs modules
+[2.318s]   are removed.  Run "cmake --help-policy CMP0148" for policy details.  Use
+[2.318s]   the cmake_policy command to set the policy and suppress this warning.
+[2.318s] 
+[2.318s] Call Stack (most recent call first):
+[2.318s]   /opt/ros/humble/share/rosidl_generator_py/cmake/rosidl_generator_py_generate_interfaces.cmake:23 (find_package)
+[2.318s]   /opt/ros/humble/share/ament_cmake_core/cmake/core/ament_execute_extensions.cmake:48 (include)
+[2.318s]   /opt/ros/humble/share/rosidl_cmake/cmake/rosidl_generate_interfaces.cmake:286 (ament_execute_extensions)
+[2.318s]   CMakeLists.txt:241 (rosidl_generate_interfaces)
+[2.318s] This warning is for project developers.  Use -Wno-dev to suppress it.
+[2.318s] [0m
+[2.327s] [33mCMake Warning (dev) at /opt/ros/humble/share/python_cmake_module/cmake/Modules/FindPythonExtra.cmake:140 (find_package):
+[2.327s]   Policy CMP0148 is not set: The FindPythonInterp and FindPythonLibs modules
+[2.327s]   are removed.  Run "cmake --help-policy CMP0148" for policy details.  Use
+[2.327s]   the cmake_policy command to set the policy and suppress this warning.
+[2.327s] 
+[2.327s] Call Stack (most recent call first):
+[2.327s]   /opt/ros/humble/share/rosidl_generator_py/cmake/rosidl_generator_py_generate_interfaces.cmake:23 (find_package)
+[2.327s]   /opt/ros/humble/share/ament_cmake_core/cmake/core/ament_execute_extensions.cmake:48 (include)
+[2.327s]   /opt/ros/humble/share/rosidl_cmake/cmake/rosidl_generate_interfaces.cmake:286 (ament_execute_extensions)
+[2.327s]   CMakeLists.txt:241 (rosidl_generate_interfaces)
+[2.327s] This warning is for project developers.  Use -Wno-dev to suppress it.
+[2.327s] [0m
+[2.329s] -- Found PythonLibs: /usr/lib/x86_64-linux-gnu/libpython3.10.so (found suitable version "3.10.12", minimum required is "3.5")
+[2.329s] -- Using PYTHON_EXECUTABLE: /usr/bin/python3
+[2.329s] -- Using PYTHON_INCLUDE_DIRS: /usr/include/python3.10
+[2.329s] -- Using PYTHON_LIBRARIES: /usr/lib/x86_64-linux-gnu/libpython3.10.so
+[2.339s] -- Found PythonExtra: .so
+[2.368s] -- Found ament_lint_auto: 0.12.14 (/opt/ros/humble/share/ament_lint_auto/cmake)
+[2.377s] -- Added test 'copyright' to check source files copyright and LICENSE
+[2.379s] -- Added test 'cppcheck' to perform static code analysis on C / C++ code
+[2.379s] -- Configured cppcheck include dirs: /home/robotics/fast_lio_ws/src/FAST_LIO_LOCALIZATION_HUMANOID/livox_ros_driver2/3rdparty;/home/robotics/fast_lio_ws/src/FAST_LIO_LOCALIZATION_HUMANOID/livox_ros_driver2/src
+[2.379s] -- Configured cppcheck exclude dirs and/or files: 
+[2.381s] -- Added test 'cpplint' to check C / C++ code against the Google style
+[2.381s] -- Configured cpplint exclude dirs and/or files: 
+[2.381s] -- Added test 'flake8' to check Python code syntax and style conventions
+[2.381s] -- Added test 'lint_cmake' to check CMake code style
+[2.381s] -- Added test 'pep257' to check Python code against some of the docstring style conventions in PEP 257
+[2.383s] -- Added test 'uncrustify' to check C / C++ code style
+[2.383s] -- Configured uncrustify additional arguments: 
+[2.383s] -- Added test 'xmllint' to check XML markup files
+[2.384s] -- Configuring done (2.4s)
+[2.387s] [0mCMake Error: The following variables are used in this project, but they are set to NOTFOUND.
+[2.388s] Please set them or make sure they are set and tested correctly in the CMake files:
+[2.388s] /home/robotics/fast_lio_ws/src/FAST_LIO_LOCALIZATION_HUMANOID/livox_ros_driver2/LIVOX_INTERFACES_INCLUDE_DIRECTORIES
+[2.388s]    used as include directory in directory /home/robotics/fast_lio_ws/src/FAST_LIO_LOCALIZATION_HUMANOID/livox_ros_driver2
+[2.388s] [0m
+[2.410s] [33mCMake Warning at /opt/ros/humble/share/ament_cmake_auto/cmake/ament_auto_add_library.cmake:66 (add_library):
+[2.410s]   Cannot generate a safe runtime search path for target livox_ros_driver2
+[2.410s]   because files in some directories may conflict with libraries in implicit
+[2.410s]   directories:
+[2.410s] 
+[2.410s]     runtime library [libtbb.so.12] in /usr/lib/x86_64-linux-gnu may be hidden by files in:
+[2.410s]       /usr/local/lib
+[2.410s] 
+[2.410s]   Some of these libraries may not be found correctly.
+[2.410s] Call Stack (most recent call first):
+[2.410s]   CMakeLists.txt:261 (ament_auto_add_library)
+[2.410s] 
+[2.410s] [0m
+[2.415s] [0mCMake Generate step failed.  Build files cannot be regenerated correctly.[0m
+[2.417s] -- Generating done (0.0s)

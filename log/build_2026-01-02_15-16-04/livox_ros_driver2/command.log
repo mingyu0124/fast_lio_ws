@@ -1,0 +1,1 @@
+Invoking command in '/home/robotics/fast_lio_ws/build/livox_ros_driver2': CMAKE_PREFIX_PATH=${CMAKE_PREFIX_PATH}:/opt/ros/humble /usr/local/bin/cmake /home/robotics/fast_lio_ws/src/FAST_LIO_LOCALIZATION_HUMANOID/livox_ros_driver2 -DAMENT_CMAKE_SYMLINK_INSTALL=1 -DCMAKE_INSTALL_PREFIX=/home/robotics/fast_lio_ws/install/livox_ros_driver2

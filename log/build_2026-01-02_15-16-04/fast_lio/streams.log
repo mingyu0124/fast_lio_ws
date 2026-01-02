@@ -1,0 +1,51 @@
+[0.009s] Invoking command in '/home/robotics/fast_lio_ws/build/fast_lio': /usr/local/bin/cmake /home/robotics/fast_lio_ws/src/FAST_LIO_LOCALIZATION_HUMANOID/FAST_LIO -DCATKIN_INSTALL_INTO_PREFIX_ROOT=0 -DCATKIN_SYMLINK_INSTALL=ON -DCMAKE_INSTALL_PREFIX=/home/robotics/fast_lio_ws/install/fast_lio
+[0.014s] [0mCMake Deprecation Warning at CMakeLists.txt:1 (cmake_minimum_required):
+[0.014s]   Compatibility with CMake < 3.10 will be removed from a future version of
+[0.014s]   CMake.
+[0.014s] 
+[0.014s]   Update the VERSION argument <min> value.  Or, use the <min>...<max> syntax
+[0.014s]   to tell CMake that the project requires at least <min> but has been updated
+[0.014s]   to work with policies introduced by <max> or earlier.
+[0.014s] 
+[0.014s] [0m
+[0.042s] -- The C compiler identification is GNU 11.4.0
+[0.075s] -- The CXX compiler identification is GNU 11.4.0
+[0.079s] -- Detecting C compiler ABI info
+[0.111s] -- Detecting C compiler ABI info - done
+[0.119s] -- Check for working C compiler: /usr/bin/cc - skipped
+[0.119s] -- Detecting C compile features
+[0.119s] -- Detecting C compile features - done
+[0.125s] -- Detecting CXX compiler ABI info
+[0.158s] -- Detecting CXX compiler ABI info - done
+[0.165s] -- Check for working CXX compiler: /usr/bin/c++ - skipped
+[0.165s] -- Detecting CXX compile features
+[0.166s] -- Detecting CXX compile features - done
+[0.170s] [0mCurrent CPU archtecture: x86_64[0m
+[0.171s] [0mProcesser number:  20[0m
+[0.172s] [0mcore for MP: 3[0m
+[0.341s] [33mCMake Warning (dev) at CMakeLists.txt:42 (find_package):
+[0.341s]   Policy CMP0148 is not set: The FindPythonInterp and FindPythonLibs modules
+[0.341s]   are removed.  Run "cmake --help-policy CMP0148" for policy details.  Use
+[0.341s]   the cmake_policy command to set the policy and suppress this warning.
+[0.341s] 
+[0.341s] This warning is for project developers.  Use -Wno-dev to suppress it.
+[0.341s] [0m
+[0.361s] -- Found PythonLibs: /usr/lib/x86_64-linux-gnu/libpython3.10.so (found version "3.10.12")
+[0.365s] [31mCMake Error at CMakeLists.txt:45 (find_package):
+[0.365s]   By not providing "Findcatkin.cmake" in CMAKE_MODULE_PATH this project has
+[0.365s]   asked CMake to find a package configuration file provided by "catkin", but
+[0.365s]   CMake did not find one.
+[0.365s] 
+[0.365s]   Could not find a package configuration file provided by "catkin" with any
+[0.365s]   of the following names:
+[0.365s] 
+[0.366s]     catkinConfig.cmake
+[0.366s]     catkin-config.cmake
+[0.366s] 
+[0.366s]   Add the installation prefix of "catkin" to CMAKE_PREFIX_PATH or set
+[0.366s]   "catkin_DIR" to a directory containing one of the above files.  If "catkin"
+[0.366s]   provides a separate development package or SDK, be sure it has been
+[0.366s]   installed.
+[0.366s] 
+[0.366s] [0m
+[0.366s] -- Configuring incomplete, errors occurred!

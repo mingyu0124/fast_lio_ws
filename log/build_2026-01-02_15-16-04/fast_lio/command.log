@@ -1,0 +1,1 @@
+Invoking command in '/home/robotics/fast_lio_ws/build/fast_lio': /usr/local/bin/cmake /home/robotics/fast_lio_ws/src/FAST_LIO_LOCALIZATION_HUMANOID/FAST_LIO -DCATKIN_INSTALL_INTO_PREFIX_ROOT=0 -DCATKIN_SYMLINK_INSTALL=ON -DCMAKE_INSTALL_PREFIX=/home/robotics/fast_lio_ws/install/fast_lio

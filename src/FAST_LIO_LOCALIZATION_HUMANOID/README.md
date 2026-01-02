@@ -45,7 +45,7 @@ Our solution can handle **rough initial pose**, allows **robust localization**, 
 
 ### Contributors
 
-[Axiang Sun 孙阿祥](https://github.com/MichaelSun1001)，[Junfeng Zhu 朱峻锋](https://github.com/JunFeng-Z)，[Yihao Xu 许益豪](https://github.com/liaraaaaaaa), [Xin Li 李鑫](https://github.com/carlos-lee123), [Zhongxia Zhao 赵仲夏](https://github.com/xiaranqing), [Gaohao Zhou 周高豪](https://github.com/GaohaoZhou-ops), Dongliang Li 李栋梁, [Xiang An 安翔](https://github.com/anxiangsir), Ziyong Feng 冯子勇，[Huajie Tan 谭桦杰](https://github.com/tanhuajie)
+[Axiang Sun 孙阿祥](https://github.com/MichaelSun1001)，朱峻峰，[Yihao Xu 许益豪](https://github.com/liaraaaaaaa), [Xin Li 李鑫](https://github.com/carlos-lee123), [Zhongxia Zhao 赵仲夏](https://github.com/xiaranqing), Gaohao Zhou 周高豪, Dongliang Li 李栋梁, [Xiang An 安翔](https://github.com/anxiangsir), Ziyong Feng 冯子勇，[Huajie Tan 谭桦杰](https://github.com/tanhuajie)
 
 If you use in an academic work, please cite:
 
