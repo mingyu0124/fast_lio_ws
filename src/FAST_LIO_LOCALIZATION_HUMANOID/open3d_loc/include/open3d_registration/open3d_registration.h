@@ -5,6 +5,7 @@
 #include <open3d/Open3D.h>
 #include <Eigen/Core>
 #include <Eigen/Dense>
+#include <optional>
 
 // using namespace open3d;
 
@@ -17,7 +18,7 @@ namespace pcd_tools
         std::shared_ptr<open3d::pipelines::registration::Feature> source_fpfh,
         std::shared_ptr<open3d::pipelines::registration::Feature> target_fpfh,
         float voxel_size,
-        open3d::utility::optional<unsigned int> seed_ = 123456,
+        std::optional<unsigned int> seed_ = 123456,
         bool mutual_filter = true);
 
     /// @brief
@@ -115,7 +116,7 @@ namespace pcd_tools
         // double reduce_ratio = 0.8;
 
         // fix seed for ransac to get a deterministic registration result(rt), set 0 to get a variant rt-->
-        open3d::utility::optional<unsigned int> seed_ = open3d::utility::nullopt;
+        std::optional<unsigned int> seed_ = std::nullopt;
         // utility::optional<unsigned int> seed_ = 123456;
         bool mutual_filter = true;
 
