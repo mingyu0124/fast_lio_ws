@@ -192,6 +192,11 @@ private:
     std_msgs::msg::Float32 localization_3d_confidence_;
     std_msgs::msg::Float32 localization_3d_delay_ms_;
 
+    /// @brief 地图点云消息缓存
+    sensor_msgs::msg::PointCloud2 map_msg_;
+    /// @brief 定期发布地图
+    rclcpp::TimerBase::SharedPtr map_pub_timer_;
+
     std::shared_ptr<tf2_ros::TransformBroadcaster> br_odom2map_;
     std::shared_ptr<tf2_ros::StaticTransformBroadcaster> static_broadcaster_;
 
@@ -265,7 +270,8 @@ GloabalLocalization::GloabalLocalization() : Node("global_loc_node"),
     pub_odom2map_ = this->create_publisher<nav_msgs::msg::Odometry>("/odom2map", 100000);
     pub_odom2map_kalman_ = this->create_publisher<nav_msgs::msg::Odometry>("/odom2map_kalman", 100000);
 
-    pub_map_ = this->create_publisher<sensor_msgs::msg::PointCloud2>("/map", 1);
+    auto map_qos = rclcpp::QoS(rclcpp::KeepLast(1)).transient_local().reliable();
+    pub_map_ = this->create_publisher<sensor_msgs::msg::PointCloud2>("/map", map_qos);
     pub_submap_ = this->create_publisher<sensor_msgs::msg::PointCloud2>("/submap", 1);
     pub_scan2map_ = this->create_publisher<sensor_msgs::msg::PointCloud2>("/scan2map", 1);
     pub_scan_ = this->create_publisher<sensor_msgs::msg::PointCloud2>("/scan", 1);
@@ -390,11 +396,18 @@ GloabalLocalization::GloabalLocalization() : Node("global_loc_node"),
     pcd_map_coarse_->EstimateNormals(open3d::geometry::KDTreeSearchParamHybrid(voxelsize_coarse_ * 2, 30));
 
     /// publish map, 用粗地图可视化，减少资源占用
-    sensor_msgs::msg::PointCloud2 pc2_map;
-    open3d_conversions::open3dToRos(*pcd_map_coarse_, pc2_map);
-    pc2_map.header.frame_id = "map";
-    pc2_map.header.stamp = this->now();
-    pub_map_->publish(pc2_map);
+    open3d_conversions::open3dToRos(*pcd_map_coarse_, map_msg_);
+    map_msg_.header.frame_id = "map";
+    map_msg_.header.stamp = this->now();
+    pub_map_->publish(map_msg_);
+
+    map_pub_timer_ = this->create_wall_timer(
+        std::chrono::seconds(1),
+        [this]()
+        {
+            map_msg_.header.stamp = this->now();
+            pub_map_->publish(map_msg_);
+        });
 
     pcd_map_fine_ = pcd_map_ori_->VoxelDownSample(voxelsize_fine_);
     pcd_map_fine_->EstimateNormals(open3d::geometry::KDTreeSearchParamHybrid(voxelsize_fine_ * 2, 30));
