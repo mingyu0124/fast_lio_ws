@@ -11,6 +11,7 @@
 #include <geometry_msgs/msg/pose_with_covariance_stamped.hpp>
 #include <geometry_msgs/msg/pose_stamped.hpp>
 #include <std_msgs/msg/float32.hpp>
+#include <std_srvs/srv/trigger.hpp>
 
 #include <tf2_eigen/tf2_eigen.hpp>
 #include <queue>
@@ -93,6 +94,11 @@ public:
     /// @brief 订阅在初始位姿
     void CallbackInitialPose(const geometry_msgs::msg::PoseWithCovarianceStamped::SharedPtr initialpose);
 
+    /// @brief 当前 위치를 초기 위치로 설정하여 재정합 트리거
+    void CallbackTriggerRelocalization(
+        const std_srvs::srv::Trigger::Request::SharedPtr request,
+        std_srvs::srv::Trigger::Response::SharedPtr response);
+
     void StartLoc();
 
     void Localization();
@@ -125,6 +131,16 @@ private:
 
     /// @brief 订阅初始位姿
     rclcpp::Subscription<geometry_msgs::msg::PoseWithCovarianceStamped>::SharedPtr sub_initialpose_;
+
+    /// @brief 재정합 트리거 서비스
+    rclcpp::Service<std_srvs::srv::Trigger>::SharedPtr srv_trigger_relocalization_;
+
+    /// @brief 재정합 트리거 플래그
+    bool trigger_relocalization_ = false;
+    std::mutex lock_trigger_relocalization_;
+
+    /// @brief 재정합 초기화 스레드
+    std::thread thread_relocalization_;
 
     /// @brief baselink到odom的pose表达
     nav_msgs::msg::Odometry pose_baselink2odom_;
@@ -288,6 +304,9 @@ GloabalLocalization::GloabalLocalization() : Node("global_loc_node"),
         "/cloud_registered_1", 50, std::bind(&GloabalLocalization::CallbackScan, this, std::placeholders::_1));
     sub_initialpose_ = this->create_subscription<geometry_msgs::msg::PoseWithCovarianceStamped>(
         "/initialpose", 50, std::bind(&GloabalLocalization::CallbackInitialPose, this, std::placeholders::_1));
+
+    srv_trigger_relocalization_ = this->create_service<std_srvs::srv::Trigger>(
+        "trigger_relocalization", std::bind(&GloabalLocalization::CallbackTriggerRelocalization, this, std::placeholders::_1, std::placeholders::_2));
 
     pose_baselink2odom_ = nav_msgs::msg::Odometry();
     pose_baselink2odom_.header.frame_id = "odom";
@@ -754,7 +773,7 @@ void GloabalLocalization::LocalizationInitialize()
         }
     }
 
-    open3d::utility::LogInfo("\n\n\nlocalization initialize success!!!!\n\n\n");
+    RCLCPP_INFO(this->get_logger(), "\033[1;32m[RELOCALIZATION] Localization initialize success!!!!\033[0m");
 }
 void GloabalLocalization::Localization()
 {
@@ -855,6 +874,39 @@ void GloabalLocalization::Localization()
     double loc_cost = 0;                                          /// 定位耗时(ms)
     while (rclcpp::ok())
     {
+        // 재정합 트리거 플래그 확인
+        bool should_relocalize = false;
+        lock_trigger_relocalization_.lock();
+        if (trigger_relocalization_)
+        {
+            should_relocalize = true;
+            trigger_relocalization_ = false;
+        }
+        lock_trigger_relocalization_.unlock();
+
+        // 재정합이 필요한 경우 LocalizationInitialize()를 다시 호출
+        if (should_relocalize)
+        {
+            RCLCPP_INFO(this->get_logger(), "\033[1;32m[RELOCALIZATION] Starting re-initialization...\033[0m");
+            mat_odom2map_ = mat_initialpose_;
+            LocalizationInitialize();
+            
+            // 卡尔曼滤波重新初始化
+            Eigen::Matrix4d init_baselink2map = mat_odom2map_ * mat_baselink2odom_;
+            double init_x = init_baselink2map(0, 3);
+            double init_y = init_baselink2map(1, 3);
+            double init_z = init_baselink2map(2, 3);
+            
+            if (kf_param_x_.size() >= 2 && kf_param_y_.size() >= 2 && kf_param_z_.size() >= 2)
+            {
+                kf_baselink_x_.KalmanFilterInit(kf_param_x_[0], kf_param_x_[1], init_x, 1);
+                kf_baselink_y_.KalmanFilterInit(kf_param_y_[0], kf_param_y_[1], init_y, 1);
+                kf_baselink_z_.KalmanFilterInit(kf_param_z_[0], kf_param_z_[1], init_z, 1);
+            }
+            kalman_filter_odom2map_.KalmanFilterInit(kalman_processVar2_, kalman_estimatedMeasVar2_, init_z, 1);
+            
+            RCLCPP_INFO(this->get_logger(), "\033[1;32m[RELOCALIZATION] Relocalization complete!\033[0m");
+        }
 
         lock_timestamp_.lock();
         time_current = timestamp_odom_;
@@ -999,31 +1051,73 @@ void GloabalLocalization::CallbackInitialPose(const geometry_msgs::msg::PoseWith
               << mat_odom2map_ << std::endl;
     std::cout << "confidence_loc_th_: " << confidence_loc_th_ << " current confidence: " << loc_fitness_ << std::endl;
 
-    if (!(loc_initialized_ && loc_fitness_ > 0.99))
-    {
-        std::cout << "initpose:x y z, x y z w\n"
-                  << initialpose->pose.pose.position.x << " "
-                  << initialpose->pose.pose.position.y << " "
-                  << initialpose->pose.pose.position.z << " "
-                  << initialpose->pose.pose.orientation.x << " "
-                  << initialpose->pose.pose.orientation.y << " "
-                  << initialpose->pose.pose.orientation.z << " "
-                  << initialpose->pose.pose.orientation.w << std::endl;
+    // 항상 초기 위치를 업데이트하고 재정합을 트리거할 수 있도록 수정
+    std::cout << "initpose:x y z, x y z w\n"
+              << initialpose->pose.pose.position.x << " "
+              << initialpose->pose.pose.position.y << " "
+              << initialpose->pose.pose.position.z << " "
+              << initialpose->pose.pose.orientation.x << " "
+              << initialpose->pose.pose.orientation.y << " "
+              << initialpose->pose.pose.orientation.z << " "
+              << initialpose->pose.pose.orientation.w << std::endl;
 
-        Eigen::Quaterniond rotation_q;
-        rotation_q.w() = initialpose->pose.pose.orientation.w;
-        rotation_q.x() = initialpose->pose.pose.orientation.x;
-        rotation_q.y() = initialpose->pose.pose.orientation.y;
-        rotation_q.z() = initialpose->pose.pose.orientation.z;
-        mat_initialpose_.block<3, 3>(0, 0) = rotation_q.matrix();
-        mat_initialpose_.block<3, 1>(0, 3) = Eigen::Vector3d(initialpose->pose.pose.position.x, initialpose->pose.pose.position.y, initialpose->pose.pose.position.z);
-        lock_mat_odom2map_.lock();
-        mat_odom2map_ = mat_initialpose_;
-        lock_mat_odom2map_.unlock();
-        std::cout << "\n\n*** update mat_odom2map_" << std::endl;
-    }
+    Eigen::Quaterniond rotation_q;
+    rotation_q.w() = initialpose->pose.pose.orientation.w;
+    rotation_q.x() = initialpose->pose.pose.orientation.x;
+    rotation_q.y() = initialpose->pose.pose.orientation.y;
+    rotation_q.z() = initialpose->pose.pose.orientation.z;
+    mat_initialpose_.block<3, 3>(0, 0) = rotation_q.matrix();
+    mat_initialpose_.block<3, 1>(0, 3) = Eigen::Vector3d(initialpose->pose.pose.position.x, initialpose->pose.pose.position.y, initialpose->pose.pose.position.z);
+    lock_mat_odom2map_.lock();
+    mat_odom2map_ = mat_initialpose_;
+    lock_mat_odom2map_.unlock();
+    std::cout << "\n\n*** update mat_odom2map_" << std::endl;
+
+    // 재정합 트리거 플래그 설정
+    lock_trigger_relocalization_.lock();
+    trigger_relocalization_ = true;
+    lock_trigger_relocalization_.unlock();
+    
+    RCLCPP_INFO(this->get_logger(), "\033[1;32m[RELOCALIZATION] Initial pose updated via /initialpose topic, relocalization triggered\033[0m");
     std::cout << "mat_odom2map_\n"
               << mat_odom2map_ << std::endl;
+}
+
+void GloabalLocalization::CallbackTriggerRelocalization(
+    const std_srvs::srv::Trigger::Request::SharedPtr request,
+    std_srvs::srv::Trigger::Response::SharedPtr response)
+{
+    (void)request; // unused parameter
+    
+    RCLCPP_INFO(this->get_logger(), "\033[1;32m[RELOCALIZATION] Trigger relocalization service called\033[0m");
+    
+    // 현재 로봇의 실제 위치를 가져옴 (baselink2map)
+    // mat_baselink2map_ = mat_odom2map_ * mat_baselink2odom_
+    // 따라서 mat_odom2map_ = mat_baselink2map_ * mat_baselink2odom_.inverse()
+    
+    Eigen::Matrix4d current_baselink2map = mat_baselink2map_;
+    Eigen::Matrix4d current_baselink2odom = mat_baselink2odom_;
+    
+    // 현재 로봇 위치를 기준으로 odom2map을 역산
+    mat_initialpose_ = current_baselink2map * current_baselink2odom.inverse();
+    
+    lock_mat_odom2map_.lock();
+    mat_odom2map_ = mat_initialpose_;
+    lock_mat_odom2map_.unlock();
+    
+    // 재정합 트리거 플래그 설정
+    lock_trigger_relocalization_.lock();
+    trigger_relocalization_ = true;
+    lock_trigger_relocalization_.unlock();
+    
+    RCLCPP_INFO(this->get_logger(), "\033[1;32m[RELOCALIZATION] Current robot position set as initial pose, relocalization triggered\033[0m");
+    RCLCPP_INFO(this->get_logger(), "Current baselink2map position: x=%.3f, y=%.3f, z=%.3f",
+                current_baselink2map(0, 3), current_baselink2map(1, 3), current_baselink2map(2, 3));
+    RCLCPP_INFO(this->get_logger(), "Calculated odom2map position: x=%.3f, y=%.3f, z=%.3f",
+                mat_initialpose_(0, 3), mat_initialpose_(1, 3), mat_initialpose_(2, 3));
+    
+    response->success = true;
+    response->message = "Relocalization triggered successfully based on current robot position";
 }
 
 double GloabalLocalization::ComputeMotionDis(const Eigen::Vector3d &a, const Eigen::Vector3d &b)

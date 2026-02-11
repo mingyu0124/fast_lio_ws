@@ -1080,6 +1080,22 @@ private:
             /******* Publish odometry *******/
             publish_odometry(pubOdomAftMapped_, tf_broadcaster_);
 
+            /******* 1Hz pose (x,y,z) and RPY output *******/
+            {
+                static double last_pose_print_time = 0;
+                if (lidar_end_time - last_pose_print_time >= 1.0)
+                {
+                    double roll_deg = euler_cur(0) * 180.0 / M_PI;
+                    double pitch_deg = euler_cur(1) * 180.0 / M_PI;
+                    double yaw_deg = euler_cur(2) * 180.0 / M_PI;
+                    RCLCPP_INFO(this->get_logger(),
+                                "\033[1;32mpose_1hz: x=%.3f y=%.3f z=%.3f roll=%.3f pitch=%.3f yaw=%.3f (deg)\033[0m",
+                                state_point.pos(0), state_point.pos(1), state_point.pos(2),
+                                roll_deg, pitch_deg, yaw_deg);
+                    last_pose_print_time = lidar_end_time;
+                }
+            }
+
             /*** add the feature points to map kdtree ***/
             t3 = omp_get_wtime();
             map_incremental();

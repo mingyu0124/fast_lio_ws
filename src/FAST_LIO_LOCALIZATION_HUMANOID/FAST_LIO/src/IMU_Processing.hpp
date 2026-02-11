@@ -12,13 +12,16 @@
 #include <pcl/point_cloud.h>
 #include <pcl/point_types.h>
 #include <condition_variable>
-#include <nav_msgs/msg/odometry.hpp>
 #include <pcl/common/transforms.h>
 #include <pcl/kdtree/kdtree_flann.h>
 #include <pcl_conversions/pcl_conversions.h>
+
+// ROS2 headers //  
 #include <sensor_msgs/msg/imu.hpp>
 #include <sensor_msgs/msg/point_cloud2.hpp>
 #include <geometry_msgs/msg/vector3.hpp>
+#include <nav_msgs/msg/odometry.hpp>
+
 #include "use-ikfom.hpp"
 
 /// *************Preconfiguration
@@ -160,6 +163,7 @@ void ImuProcess::IMU_init(const MeasureGroup &meas, esekfom::esekf<state_ikfom, 
   
   V3D cur_acc, cur_gyr;
   
+  // first frame
   if (b_first_frame_)
   {
     Reset();
@@ -172,6 +176,7 @@ void ImuProcess::IMU_init(const MeasureGroup &meas, esekfom::esekf<state_ikfom, 
     first_lidar_time = meas.lidar_beg_time;
   }
 
+  // accumulate imu measurements (init imu bias and covariances)
   for (const auto &imu : meas.imu)
   {
     const auto &imu_acc = imu->linear_acceleration;
@@ -210,6 +215,7 @@ void ImuProcess::IMU_init(const MeasureGroup &meas, esekfom::esekf<state_ikfom, 
 
 }
 
+// main deskewed function: undistort point cloud with imu measurements
 void ImuProcess::UndistortPcl(const MeasureGroup &meas, esekfom::esekf<state_ikfom, 12, input_ikfom> &kf_state, PointCloudXYZI &pcl_out)
 {
   /*** add the imu of the last frame-tail to the of current frame-head ***/
