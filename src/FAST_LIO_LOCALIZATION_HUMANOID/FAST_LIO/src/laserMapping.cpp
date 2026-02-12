@@ -99,6 +99,7 @@ bool point_selected_surf[100000] = {0};
 bool lidar_pushed, flg_first_scan = true, flg_exit = false, flg_EKF_inited;
 bool scan_pub_en = false, dense_pub_en = false, scan_body_pub_en = false;
 bool is_first_lidar = true;
+bool global_map_enable = false;  // true: keep all points (expand box only), false: sliding window (delete points outside)
 
 vector<vector<int>> pointSearchInd_surf;
 vector<BoxPointType> cub_needrm;
@@ -268,17 +269,33 @@ void lasermap_fov_segment()
         tmp_boxpoints = LocalMap_Points;
         if (dist_to_map_edge[i][0] <= MOV_THRESHOLD * DET_RANGE)
         {
-            New_LocalMap_Points.vertex_max[i] -= mov_dist;
-            New_LocalMap_Points.vertex_min[i] -= mov_dist;
-            tmp_boxpoints.vertex_min[i] = LocalMap_Points.vertex_max[i] - mov_dist;
-            cub_needrm.push_back(tmp_boxpoints);
+            if (global_map_enable)
+            {
+                /* Global map: expand box only, do not delete points */
+                New_LocalMap_Points.vertex_min[i] -= mov_dist;
+            }
+            else
+            {
+                New_LocalMap_Points.vertex_max[i] -= mov_dist;
+                New_LocalMap_Points.vertex_min[i] -= mov_dist;
+                tmp_boxpoints.vertex_min[i] = LocalMap_Points.vertex_max[i] - mov_dist;
+                cub_needrm.push_back(tmp_boxpoints);
+            }
         }
         else if (dist_to_map_edge[i][1] <= MOV_THRESHOLD * DET_RANGE)
         {
-            New_LocalMap_Points.vertex_max[i] += mov_dist;
-            New_LocalMap_Points.vertex_min[i] += mov_dist;
-            tmp_boxpoints.vertex_max[i] = LocalMap_Points.vertex_min[i] + mov_dist;
-            cub_needrm.push_back(tmp_boxpoints);
+            if (global_map_enable)
+            {
+                /* Global map: expand box only, do not delete points */
+                New_LocalMap_Points.vertex_max[i] += mov_dist;
+            }
+            else
+            {
+                New_LocalMap_Points.vertex_max[i] += mov_dist;
+                New_LocalMap_Points.vertex_min[i] += mov_dist;
+                tmp_boxpoints.vertex_max[i] = LocalMap_Points.vertex_min[i] + mov_dist;
+                cub_needrm.push_back(tmp_boxpoints);
+            }
         }
     }
     LocalMap_Points = New_LocalMap_Points;
@@ -493,7 +510,9 @@ void map_incremental()
     }
 
     double st_time = omp_get_wtime();
-    add_point_size = ikdtree.Add_Points(PointToAdd, true);
+    /* When global_map_enable: do not downsample on add (avoid deleting existing points in same voxel) */
+    bool downsample_on_add = !global_map_enable;
+    add_point_size = ikdtree.Add_Points(PointToAdd, downsample_on_add);
     ikdtree.Add_Points(PointNoNeedDownsample, false);
     add_point_size = PointToAdd.size() + PointNoNeedDownsample.size();
     kdtree_incremental_time = omp_get_wtime() - st_time;
@@ -868,6 +887,9 @@ public:
         this->get_parameter_or<double>("filter_size_map", filter_size_map_min, 0.5);
         this->get_parameter_or<double>("cube_side_length", cube_len, 200.f);
         this->get_parameter_or<float>("mapping.det_range", DET_RANGE, 300.f);
+        this->get_parameter_or<bool>("mapping.global_map_enable", global_map_enable, false);
+        if (global_map_enable)
+            RCLCPP_INFO(this->get_logger(), "Global map mode: enabled (map points will not be removed)");
         this->get_parameter_or<double>("mapping.fov_degree", fov_deg, 180.f);
         this->get_parameter_or<double>("mapping.gyr_cov", gyr_cov, 0.1);
         this->get_parameter_or<double>("mapping.acc_cov", acc_cov, 0.1);
