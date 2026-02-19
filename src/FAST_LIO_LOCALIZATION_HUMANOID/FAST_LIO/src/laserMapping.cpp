@@ -614,36 +614,46 @@ void publish_effect_world(rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::Shar
 
 void publish_map(rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pubLaserCloudMap)
 {
-    PointCloudXYZI::Ptr laserCloudFullRes(dense_pub_en ? feats_undistort : feats_down_body);
-    int size = laserCloudFullRes->points.size();
-    PointCloudXYZI::Ptr laserCloudWorld(
-        new PointCloudXYZI(size, 1));
-
-    for (int i = 0; i < size; i++)
-    {
-        RGBpointBodyToWorld(&laserCloudFullRes->points[i],
-                            &laserCloudWorld->points[i]);
-    }
-    *pcl_wait_pub += *laserCloudWorld;
-
+    /* Publish ikdtree (actual map) so rviz2 shows the same data as map_save and as used for matching */
     sensor_msgs::msg::PointCloud2 laserCloudmsg;
-    pcl::toROSMsg(*pcl_wait_pub, laserCloudmsg);
-    // laserCloudmsg.header.stamp = ros::Time().fromSec(lidar_end_time);
+    if (ikdtree.Root_Node != nullptr)
+    {
+        PointVector map_points;
+        ikdtree.flatten(ikdtree.Root_Node, map_points, NOT_RECORD);
+        PointCloudXYZI cloud;
+        cloud.points.assign(map_points.begin(), map_points.end());
+        pcl::toROSMsg(cloud, laserCloudmsg);
+    }
+    else
+    {
+        PointCloudXYZI empty_cloud;
+        pcl::toROSMsg(empty_cloud, laserCloudmsg);
+    }
     laserCloudmsg.header.stamp = get_ros_time(lidar_end_time);
     laserCloudmsg.header.frame_id = "camera_init";
     pubLaserCloudMap->publish(laserCloudmsg);
-
-    // sensor_msgs::msg::PointCloud2 laserCloudMap;
-    // pcl::toROSMsg(*featsFromMap, laserCloudMap);
-    // laserCloudMap.header.stamp = get_ros_time(lidar_end_time);
-    // laserCloudMap.header.frame_id = "camera_init";
-    // pubLaserCloudMap->publish(laserCloudMap);
 }
 
 void save_to_pcd()
 {
     pcl::PCDWriter pcd_writer;
     pcd_writer.writeBinary(map_file_path, *pcl_wait_pub);
+}
+
+/* Save ikdtree (actual map used for matching) to PCD. Recommended for localization pre-map. */
+void save_ikdtree_to_pcd()
+{
+    if (ikdtree.Root_Node == nullptr)
+    {
+        std::cerr << "[map_save] ikdtree is empty, nothing to save." << std::endl;
+        return;
+    }
+    PointVector map_points;
+    ikdtree.flatten(ikdtree.Root_Node, map_points, NOT_RECORD);
+    PointCloudXYZI cloud;
+    cloud.points.assign(map_points.begin(), map_points.end());
+    pcl::PCDWriter pcd_writer;
+    pcd_writer.writeBinary(map_file_path, cloud);
 }
 
 template <typename T>
@@ -1177,9 +1187,10 @@ private:
         RCLCPP_INFO(this->get_logger(), "Saving map to %s...", map_file_path.c_str());
         if (pcd_save_en)
         {
-            save_to_pcd();
+            /* Save ikdtree (actual map) for localization pre-map; same file path as before */
+            save_ikdtree_to_pcd();
             res->success = true;
-            res->message = "Map saved.";
+            res->message = "Map saved (ikdtree).";
         }
         else
         {
