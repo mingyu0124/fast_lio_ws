@@ -100,6 +100,7 @@ bool lidar_pushed, flg_first_scan = true, flg_exit = false, flg_EKF_inited;
 bool scan_pub_en = false, dense_pub_en = false, scan_body_pub_en = false;
 bool is_first_lidar = true;
 bool global_map_enable = false;  // true: keep all points (expand box only), false: sliding window (delete points outside)
+bool map_use_ikdtree = false;    // true: map = ikdtree, false: map = accumulated cloud_registered_1 (pcl_wait_pub)
 
 vector<vector<int>> pointSearchInd_surf;
 vector<BoxPointType> cub_needrm;
@@ -535,6 +536,9 @@ void publish_frame_world(rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::Share
                                 &laserCloudWorld->points[i]);
         }
 
+        /* Map = accumulated cloud_registered_1 (same data as this frame) */
+        *pcl_wait_pub += *laserCloudWorld;
+
         sensor_msgs::msg::PointCloud2 laserCloudmsg;
         pcl::toROSMsg(*laserCloudWorld, laserCloudmsg);
         // laserCloudmsg.header.stamp = ros::Time().fromSec(lidar_end_time);
@@ -614,9 +618,8 @@ void publish_effect_world(rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::Shar
 
 void publish_map(rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pubLaserCloudMap)
 {
-    /* Publish ikdtree (actual map) so rviz2 shows the same data as map_save and as used for matching */
     sensor_msgs::msg::PointCloud2 laserCloudmsg;
-    if (ikdtree.Root_Node != nullptr)
+    if (map_use_ikdtree && ikdtree.Root_Node != nullptr)
     {
         PointVector map_points;
         ikdtree.flatten(ikdtree.Root_Node, map_points, NOT_RECORD);
@@ -626,8 +629,7 @@ void publish_map(rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pub
     }
     else
     {
-        PointCloudXYZI empty_cloud;
-        pcl::toROSMsg(empty_cloud, laserCloudmsg);
+        pcl::toROSMsg(*pcl_wait_pub, laserCloudmsg);
     }
     laserCloudmsg.header.stamp = get_ros_time(lidar_end_time);
     laserCloudmsg.header.frame_id = "camera_init";
@@ -877,6 +879,7 @@ public:
         this->declare_parameter<bool>("mapping.extrinsic_est_en", true);
         this->declare_parameter<bool>("pcd_save.pcd_save_en", false);
         this->declare_parameter<int>("pcd_save.interval", -1);
+        this->declare_parameter<bool>("mapping.map_use_ikdtree", false);
         this->declare_parameter<vector<double>>("mapping.extrinsic_T", vector<double>());
         this->declare_parameter<vector<double>>("mapping.extrinsic_R", vector<double>());
 
@@ -898,8 +901,10 @@ public:
         this->get_parameter_or<double>("cube_side_length", cube_len, 200.f);
         this->get_parameter_or<float>("mapping.det_range", DET_RANGE, 300.f);
         this->get_parameter_or<bool>("mapping.global_map_enable", global_map_enable, false);
+        this->get_parameter_or<bool>("mapping.map_use_ikdtree", map_use_ikdtree, false);
         if (global_map_enable)
             RCLCPP_INFO(this->get_logger(), "Global map mode: enabled (map points will not be removed)");
+        RCLCPP_INFO(this->get_logger(), "Map source: %s", map_use_ikdtree ? "ikdtree" : "cloud_registered");
         this->get_parameter_or<double>("mapping.fov_degree", fov_deg, 180.f);
         this->get_parameter_or<double>("mapping.gyr_cov", gyr_cov, 0.1);
         this->get_parameter_or<double>("mapping.acc_cov", acc_cov, 0.1);
@@ -1187,10 +1192,17 @@ private:
         RCLCPP_INFO(this->get_logger(), "Saving map to %s...", map_file_path.c_str());
         if (pcd_save_en)
         {
-            /* Save ikdtree (actual map) for localization pre-map; same file path as before */
-            save_ikdtree_to_pcd();
+            if (map_use_ikdtree)
+            {
+                save_ikdtree_to_pcd();
+                res->message = "Map saved (ikdtree).";
+            }
+            else
+            {
+                save_to_pcd();
+                res->message = "Map saved (cloud_registered).";
+            }
             res->success = true;
-            res->message = "Map saved (ikdtree).";
         }
         else
         {
