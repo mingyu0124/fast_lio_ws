@@ -40,6 +40,8 @@
 #include <csignal>
 #include <chrono>
 #include <unistd.h>
+#include <set>
+#include <tuple>
 #include <Python.h>
 #include <so3_math.h>
 #include <rclcpp/rclcpp.hpp>
@@ -101,6 +103,9 @@ bool scan_pub_en = false, dense_pub_en = false, scan_body_pub_en = false;
 bool is_first_lidar = true;
 bool global_map_enable = false;  // true: keep all points (expand box only), false: sliding window (delete points outside)
 bool map_use_ikdtree = false;    // true: map = ikdtree, false: map = accumulated cloud_registered_1 (pcl_wait_pub)
+double map_cloud_voxel_size = 0.0;  // when > 0: voxel-downsample cloud_registered map on publish/save to reduce data (e.g. 0.2, 0.5)
+double map_accum_voxel_size = 0.5;  // voxel size for "already have point" check when accumulating (set in init)
+std::set<std::tuple<int32_t, int32_t, int32_t>> map_voxel_occupied;  // voxels that already have a point (O(1) check, no full-map filter)
 
 vector<vector<int>> pointSearchInd_surf;
 vector<BoxPointType> cub_needrm;
@@ -122,6 +127,7 @@ PointCloudXYZI::Ptr _featsArray;
 
 pcl::VoxelGrid<PointType> downSizeFilterSurf;
 pcl::VoxelGrid<PointType> downSizeFilterMap;
+pcl::VoxelGrid<PointType> downSizeFilterMapOutput;  // for cloud_registered map publish/save downsampling
 
 KD_TREE<PointType> ikdtree;
 
@@ -536,8 +542,20 @@ void publish_frame_world(rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::Share
                                 &laserCloudWorld->points[i]);
         }
 
-        /* Map = accumulated cloud_registered_1 (same data as this frame) */
-        *pcl_wait_pub += *laserCloudWorld;
+        /* Map = accumulated cloud_registered_1; add only if voxel not already occupied (O(new_points), no full-map filter) */
+        for (size_t i = 0; i < laserCloudWorld->points.size(); i++)
+        {
+            const PointType &pt = laserCloudWorld->points[i];
+            int32_t ix = static_cast<int32_t>(std::floor(pt.x / map_accum_voxel_size));
+            int32_t iy = static_cast<int32_t>(std::floor(pt.y / map_accum_voxel_size));
+            int32_t iz = static_cast<int32_t>(std::floor(pt.z / map_accum_voxel_size));
+            auto key = std::make_tuple(ix, iy, iz);
+            if (map_voxel_occupied.find(key) == map_voxel_occupied.end())
+            {
+                map_voxel_occupied.insert(key);
+                pcl_wait_pub->points.push_back(pt);
+            }
+        }
 
         sensor_msgs::msg::PointCloud2 laserCloudmsg;
         pcl::toROSMsg(*laserCloudWorld, laserCloudmsg);
@@ -619,27 +637,50 @@ void publish_effect_world(rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::Shar
 void publish_map(rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::SharedPtr pubLaserCloudMap)
 {
     sensor_msgs::msg::PointCloud2 laserCloudmsg;
+    size_t map_point_num = 0;
     if (map_use_ikdtree && ikdtree.Root_Node != nullptr)
     {
         PointVector map_points;
         ikdtree.flatten(ikdtree.Root_Node, map_points, NOT_RECORD);
+        map_point_num = map_points.size();
         PointCloudXYZI cloud;
         cloud.points.assign(map_points.begin(), map_points.end());
         pcl::toROSMsg(cloud, laserCloudmsg);
     }
     else
     {
-        pcl::toROSMsg(*pcl_wait_pub, laserCloudmsg);
+        if (map_cloud_voxel_size > 0.0 && pcl_wait_pub->points.size() > 0)
+        {
+            PointCloudXYZI::Ptr cloud_ds(new PointCloudXYZI());
+            downSizeFilterMapOutput.setInputCloud(pcl_wait_pub);
+            downSizeFilterMapOutput.filter(*cloud_ds);
+            map_point_num = cloud_ds->points.size();
+            pcl::toROSMsg(*cloud_ds, laserCloudmsg);
+        }
+        else
+        {
+            map_point_num = pcl_wait_pub->points.size();
+            pcl::toROSMsg(*pcl_wait_pub, laserCloudmsg);
+        }
     }
     laserCloudmsg.header.stamp = get_ros_time(lidar_end_time);
     laserCloudmsg.header.frame_id = "camera_init";
     pubLaserCloudMap->publish(laserCloudmsg);
+    RCLCPP_INFO(rclcpp::get_logger("laser_mapping"), "Laser_map points: %zu", map_point_num);
 }
 
 void save_to_pcd()
 {
     pcl::PCDWriter pcd_writer;
-    pcd_writer.writeBinary(map_file_path, *pcl_wait_pub);
+    if (map_cloud_voxel_size > 0.0 && pcl_wait_pub->points.size() > 0)
+    {
+        PointCloudXYZI::Ptr cloud_ds(new PointCloudXYZI());
+        downSizeFilterMapOutput.setInputCloud(pcl_wait_pub);
+        downSizeFilterMapOutput.filter(*cloud_ds);
+        pcd_writer.writeBinary(map_file_path, *cloud_ds);
+    }
+    else
+        pcd_writer.writeBinary(map_file_path, *pcl_wait_pub);
 }
 
 /* Save ikdtree (actual map used for matching) to PCD. Recommended for localization pre-map. */
@@ -880,6 +921,7 @@ public:
         this->declare_parameter<bool>("pcd_save.pcd_save_en", false);
         this->declare_parameter<int>("pcd_save.interval", -1);
         this->declare_parameter<bool>("mapping.map_use_ikdtree", false);
+        this->declare_parameter<double>("mapping.cloud_registered_voxel_size", 0.0);
         this->declare_parameter<vector<double>>("mapping.extrinsic_T", vector<double>());
         this->declare_parameter<vector<double>>("mapping.extrinsic_R", vector<double>());
 
@@ -902,6 +944,14 @@ public:
         this->get_parameter_or<float>("mapping.det_range", DET_RANGE, 300.f);
         this->get_parameter_or<bool>("mapping.global_map_enable", global_map_enable, false);
         this->get_parameter_or<bool>("mapping.map_use_ikdtree", map_use_ikdtree, false);
+        this->get_parameter_or<double>("mapping.cloud_registered_voxel_size", map_cloud_voxel_size, 0.0);
+        if (map_cloud_voxel_size > 0.0)
+        {
+            downSizeFilterMapOutput.setLeafSize(map_cloud_voxel_size, map_cloud_voxel_size, map_cloud_voxel_size);
+            RCLCPP_INFO(this->get_logger(), "Cloud_registered map voxel downsampling: %.3f m", map_cloud_voxel_size);
+        }
+        /* Accumulation: same voxel = one point (map size bounded); voxel size for "already occupied" check */
+        map_accum_voxel_size = (map_cloud_voxel_size > 0.0) ? map_cloud_voxel_size : filter_size_map_min;
         if (global_map_enable)
             RCLCPP_INFO(this->get_logger(), "Global map mode: enabled (map points will not be removed)");
         RCLCPP_INFO(this->get_logger(), "Map source: %s", map_use_ikdtree ? "ikdtree" : "cloud_registered");
