@@ -39,9 +39,11 @@
 #include <fstream>
 #include <csignal>
 #include <chrono>
+#include <cstdint>
 #include <unistd.h>
 #include <set>
 #include <tuple>
+#include <unordered_set>
 #include <Python.h>
 #include <so3_math.h>
 #include <rclcpp/rclcpp.hpp>
@@ -86,6 +88,7 @@ double time_diff_lidar_to_imu = 0.0;
 
 mutex mtx_buffer;
 condition_variable sig_buffer;
+mutex mtx_pcl_wait_pub;  // protect pcl_wait_pub for async map publish (avoid frame stutter)
 
 string root_dir = ROOT_DIR;
 string map_file_path, lid_topic, imu_topic;
@@ -105,7 +108,9 @@ bool global_map_enable = false;  // true: keep all points (expand box only), fal
 bool map_use_ikdtree = false;    // true: map = ikdtree, false: map = accumulated cloud_registered_1 (pcl_wait_pub)
 double map_cloud_voxel_size = 0.0;  // when > 0: voxel-downsample cloud_registered map on publish/save to reduce data (e.g. 0.2, 0.5)
 double map_accum_voxel_size = 0.5;  // voxel size for "already have point" check when accumulating (set in init)
-std::set<std::tuple<int32_t, int32_t, int32_t>> map_voxel_occupied;  // voxels that already have a point (O(1) check, no full-map filter)
+struct VoxelKey { int32_t x, y, z; bool operator==(const VoxelKey& o) const { return x == o.x && y == o.y && z == o.z; } };
+struct VoxelKeyHash { size_t operator()(const VoxelKey& k) const { return ((size_t)(uint32_t)k.x) ^ (((size_t)(uint32_t)k.y) << 16) ^ (((size_t)(uint32_t)k.z) << 32); } };
+std::unordered_set<VoxelKey, VoxelKeyHash> map_voxel_occupied;  // O(1) find/insert so frame time does not grow as map grows
 
 vector<vector<int>> pointSearchInd_surf;
 vector<BoxPointType> cub_needrm;
@@ -542,18 +547,21 @@ void publish_frame_world(rclcpp::Publisher<sensor_msgs::msg::PointCloud2>::Share
                                 &laserCloudWorld->points[i]);
         }
 
-        /* Map = accumulated cloud_registered_1; add only if voxel not already occupied (O(new_points), no full-map filter) */
-        for (size_t i = 0; i < laserCloudWorld->points.size(); i++)
+        /* Accumulate cloud_registered for map save; SLAM matching uses ikdtree only. unordered_set keeps per-frame cost O(scan_size). */
         {
-            const PointType &pt = laserCloudWorld->points[i];
-            int32_t ix = static_cast<int32_t>(std::floor(pt.x / map_accum_voxel_size));
-            int32_t iy = static_cast<int32_t>(std::floor(pt.y / map_accum_voxel_size));
-            int32_t iz = static_cast<int32_t>(std::floor(pt.z / map_accum_voxel_size));
-            auto key = std::make_tuple(ix, iy, iz);
-            if (map_voxel_occupied.find(key) == map_voxel_occupied.end())
+            std::lock_guard<std::mutex> lk(mtx_pcl_wait_pub);
+            for (size_t i = 0; i < laserCloudWorld->points.size(); i++)
             {
-                map_voxel_occupied.insert(key);
-                pcl_wait_pub->points.push_back(pt);
+                const PointType &pt = laserCloudWorld->points[i];
+                int32_t ix = static_cast<int32_t>(std::floor(pt.x / map_accum_voxel_size));
+                int32_t iy = static_cast<int32_t>(std::floor(pt.y / map_accum_voxel_size));
+                int32_t iz = static_cast<int32_t>(std::floor(pt.z / map_accum_voxel_size));
+                VoxelKey key{ix, iy, iz};
+                if (map_voxel_occupied.find(key) == map_voxel_occupied.end())
+                {
+                    map_voxel_occupied.insert(key);
+                    pcl_wait_pub->points.push_back(pt);
+                }
             }
         }
 
@@ -1233,8 +1241,44 @@ private:
 
     void map_publish_callback()
     {
-        if (map_pub_en)
-            publish_map(pubLaserCloudMap_);
+        if (!map_pub_en)
+            return;
+        /* Run heavy work (copy + voxel filter + publish) off the mapping thread so 1Hz map publish does not cause frame stutter (original fast-lio2 had no separate map timer). */
+        auto pub = pubLaserCloudMap_;
+        const double stamp = lidar_end_time;
+        const bool use_ikdtree = map_use_ikdtree;
+        const double voxel_size = map_cloud_voxel_size;
+        PointCloudXYZI::Ptr local(new PointCloudXYZI());
+        if (use_ikdtree && ikdtree.Root_Node != nullptr)
+        {
+            PointVector map_points;
+            ikdtree.flatten(ikdtree.Root_Node, map_points, NOT_RECORD);
+            local->points.assign(map_points.begin(), map_points.end());
+        }
+        std::thread([local, pub, stamp, use_ikdtree, voxel_size]()
+        {
+            PointCloudXYZI::Ptr work = local;
+            if (!use_ikdtree)
+            {
+                work.reset(new PointCloudXYZI());
+                { std::lock_guard<std::mutex> lk(mtx_pcl_wait_pub); *work = *pcl_wait_pub; }
+            }
+            sensor_msgs::msg::PointCloud2 laserCloudmsg;
+            if (!use_ikdtree && voxel_size > 0.0 && work->points.size() > 0)
+            {
+                PointCloudXYZI::Ptr cloud_ds(new PointCloudXYZI());
+                downSizeFilterMapOutput.setInputCloud(work);
+                downSizeFilterMapOutput.filter(*cloud_ds);
+                pcl::toROSMsg(*cloud_ds, laserCloudmsg);
+            }
+            else
+            {
+                pcl::toROSMsg(*work, laserCloudmsg);
+            }
+            laserCloudmsg.header.stamp = get_ros_time(stamp);
+            laserCloudmsg.header.frame_id = "camera_init";
+            pub->publish(laserCloudmsg);
+        }).detach();
     }
 
     void map_save_callback(std_srvs::srv::Trigger::Request::ConstSharedPtr req, std_srvs::srv::Trigger::Response::SharedPtr res)
@@ -1242,16 +1286,9 @@ private:
         RCLCPP_INFO(this->get_logger(), "Saving map to %s...", map_file_path.c_str());
         if (pcd_save_en)
         {
-            if (map_use_ikdtree)
-            {
-                save_ikdtree_to_pcd();
-                res->message = "Map saved (ikdtree).";
-            }
-            else
-            {
-                save_to_pcd();
-                res->message = "Map saved (cloud_registered).";
-            }
+            /* SLAM uses ikdtree; map save always uses accumulated cloud_registered */
+            save_to_pcd();
+            res->message = "Map saved (cloud_registered).";
             res->success = true;
         }
         else
