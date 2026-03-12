@@ -97,6 +97,7 @@ double res_mean_last = 0.05, total_residual = 0.0;
 double last_timestamp_lidar = 0, last_timestamp_imu = -1.0;
 double gyr_cov = 0.1, acc_cov = 0.1, b_gyr_cov = 0.0001, b_acc_cov = 0.0001;
 double filter_size_corner_min = 0, filter_size_surf_min = 0, filter_size_map_min = 0, fov_deg = 0;
+float z_min_range = 1e9f, z_max_range = -1e9f;  // default: no z filter (z_min > z_max)
 double cube_len = 0, HALF_FOV_COS = 0, FOV_DEG = 0, total_distance = 0, lidar_end_time = 0, first_lidar_time = 0.0;
 int effct_feat_num = 0, time_log_counter = 0, scan_count = 0, publish_count = 0;
 int iterCount = 0, feats_down_size = 0, NUM_MAX_ITERATIONS = 0, laserCloudValidNum = 0, pcd_save_interval = -1, pcd_index = 0;
@@ -337,6 +338,15 @@ void standard_pcl_cbk(const sensor_msgs::msg::PointCloud2::UniquePtr msg)
 
     PointCloudXYZI::Ptr ptr(new PointCloudXYZI());
     p_pre->process(msg, ptr);
+    if (z_min_range <= z_max_range)
+    {
+        PointCloudXYZI::Ptr filtered(new PointCloudXYZI());
+        for (const auto &pt : ptr->points)
+            if (pt.z >= z_min_range && pt.z <= z_max_range)
+                filtered->points.push_back(pt);
+        filtered->header = ptr->header;
+        ptr = filtered;
+    }
     lidar_buffer.push_back(ptr);
     time_buffer.push_back(cur_time);
     last_timestamp_lidar = cur_time;
@@ -379,6 +389,15 @@ void livox_pcl_cbk(const livox_ros_driver2::msg::CustomMsg::UniquePtr msg)
 
     PointCloudXYZI::Ptr ptr(new PointCloudXYZI());
     p_pre->process(msg, ptr);
+    if (z_min_range <= z_max_range)
+    {
+        PointCloudXYZI::Ptr filtered(new PointCloudXYZI());
+        for (const auto &pt : ptr->points)
+            if (pt.z >= z_min_range && pt.z <= z_max_range)
+                filtered->points.push_back(pt);
+        filtered->header = ptr->header;
+        ptr = filtered;
+    }
     lidar_buffer.push_back(ptr);
     time_buffer.push_back(last_timestamp_lidar);
 
@@ -901,6 +920,7 @@ public:
         this->declare_parameter<bool>("publish.scan_publish_en", true);
         this->declare_parameter<bool>("publish.dense_publish_en", true);
         this->declare_parameter<bool>("publish.scan_bodyframe_pub_en", true);
+        this->declare_parameter<double>("publish.map_pub_period_sec", 1.0);
         this->declare_parameter<int>("max_iteration", 4);
         this->declare_parameter<string>("map_file_path", "");
         this->declare_parameter<string>("common.lid_topic", "/livox/lidar");
@@ -913,6 +933,8 @@ public:
         this->declare_parameter<double>("cube_side_length", 200.);
         this->declare_parameter<float>("mapping.det_range", 300.);
         this->declare_parameter<double>("mapping.fov_degree", 180.);
+        this->declare_parameter<float>("mapping.z_min_range", 1e9f);
+        this->declare_parameter<float>("mapping.z_max_range", -1e9f);
         this->declare_parameter<double>("mapping.gyr_cov", 0.1);
         this->declare_parameter<double>("mapping.acc_cov", 0.1);
         this->declare_parameter<double>("mapping.b_gyr_cov", 0.0001);
@@ -939,6 +961,8 @@ public:
         this->get_parameter_or<bool>("publish.scan_publish_en", scan_pub_en, true);
         this->get_parameter_or<bool>("publish.dense_publish_en", dense_pub_en, true);
         this->get_parameter_or<bool>("publish.scan_bodyframe_pub_en", scan_body_pub_en, true);
+        double map_pub_period_sec = 1.0;
+        this->get_parameter_or<double>("publish.map_pub_period_sec", map_pub_period_sec, 1.0);
         this->get_parameter_or<int>("max_iteration", NUM_MAX_ITERATIONS, 4);
         this->get_parameter_or<string>("map_file_path", map_file_path, "");
         this->get_parameter_or<string>("common.lid_topic", lid_topic, "/livox/lidar");
@@ -950,6 +974,10 @@ public:
         this->get_parameter_or<double>("filter_size_map", filter_size_map_min, 0.5);
         this->get_parameter_or<double>("cube_side_length", cube_len, 200.f);
         this->get_parameter_or<float>("mapping.det_range", DET_RANGE, 300.f);
+        this->get_parameter_or<float>("mapping.z_min_range", z_min_range, 1e9f);
+        this->get_parameter_or<float>("mapping.z_max_range", z_max_range, -1e9f);
+        if (z_min_range <= z_max_range)
+            RCLCPP_INFO(this->get_logger(), "Z-axis filter: [%.2f, %.2f] m (lidar frame)", z_min_range, z_max_range);
         this->get_parameter_or<bool>("mapping.global_map_enable", global_map_enable, false);
         this->get_parameter_or<bool>("mapping.map_use_ikdtree", map_use_ikdtree, false);
         this->get_parameter_or<double>("mapping.cloud_registered_voxel_size", map_cloud_voxel_size, 0.0);
@@ -1052,7 +1080,7 @@ public:
         auto period_ms = std::chrono::milliseconds(static_cast<int64_t>(1000.0 / 100.0));
         timer_ = rclcpp::create_timer(this, this->get_clock(), period_ms, std::bind(&LaserMappingNode::timer_callback, this));
 
-        auto map_period_ms = std::chrono::milliseconds(static_cast<int64_t>(1000.0));
+        auto map_period_ms = std::chrono::milliseconds(static_cast<int64_t>(map_pub_period_sec * 1000.0));
         map_pub_timer_ = rclcpp::create_timer(this, this->get_clock(), map_period_ms, std::bind(&LaserMappingNode::map_publish_callback, this));
 
         map_save_srv_ = this->create_service<std_srvs::srv::Trigger>("map_save", std::bind(&LaserMappingNode::map_save_callback, this, std::placeholders::_1, std::placeholders::_2));

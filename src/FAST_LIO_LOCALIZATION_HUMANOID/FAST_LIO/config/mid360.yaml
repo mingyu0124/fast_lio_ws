@@ -4,7 +4,7 @@
     point_filter_num: 2
     max_iteration: 3
     filter_size_surf: 0.4
-    filter_size_map: 0.35
+    filter_size_map: 0.05 # cloud_registered map의 voxel 크기
     cube_side_length: 1000.0
     runtime_pos_log_enable: false
     map_file_path: "./test.pcd"
@@ -32,9 +32,11 @@
       b_gyr_cov: 0.0001
       fov_degree: 360.0
       det_range: 300.0
-      global_map_enable: false   # true: keep full global map (no sliding window delete), false: local sliding window
+      z_min_range: -0.5 # z축 범위 설정 (m)
+      z_max_range: 0.2 # z축 범위 설정 (m)
+      global_map_enable: true # true: keep full global map (no sliding window delete), false: local sliding window
       map_use_ikdtree: false    # true: map = ikdtree (Laser_map + map_save), false: map = accumulated cloud_registered_1
-      cloud_registered_voxel_size: 0.2  # when > 0: voxel-downsample cloud_registered map on publish/save (reduce lag); 0 = no downsampling
+      cloud_registered_voxel_size: 0.0 # when > 0: Laser_map에 publish 할 때 voxel-downsample; 0 = no downsampling
       extrinsic_est_en: false # true: enable the online estimation of IMU-LiDAR extrinsic
       extrinsic_T: [-0.011, -0.02329, 0.04412]
       extrinsic_R: [1., 0., 0., 0., 1., 0., 0., 0., 1.]
@@ -43,6 +45,7 @@
       path_en: true # true: publish Path
       effect_map_en: false # true: publish Effects
       map_en: true # true: publish Map cloud
+      map_pub_period_sec: 0.5  # Laser_map topic publish period (sec); 1.0 = 1 Hz, 0.5 = 2 Hz, 2.0 = 0.5 Hz
       scan_publish_en: true # false: close all the point cloud output
       dense_publish_en: true # false: low down the points number in a global-frame point clouds scan.
       scan_bodyframe_pub_en: true # true: output the point cloud scans in IMU-body-frame
