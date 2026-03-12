@@ -210,6 +210,13 @@ private:
 
     /// @brief 地图点云消息缓存
     sensor_msgs::msg::PointCloud2 map_msg_;
+    /// @brief scan2map 발행용 메시지 (동적 장애물 색상 포함)
+    sensor_msgs::msg::PointCloud2 scan2map_msg_;
+
+    /// @brief 맵과의 거리 기준(m): 이 거리 이내면 정적(맵과 겹침), 넘으면 동적 장애물로 표시
+    double dynamic_obstacle_threshold_;
+    /// @brief scan2map 토픽에 정적/동적 색상으로 발행할지 여부
+    bool publish_scan2map_dynamic_;
     /// @brief 定期发布地图
     rclcpp::TimerBase::SharedPtr map_pub_timer_;
 
@@ -351,6 +358,8 @@ GloabalLocalization::GloabalLocalization() : Node("global_loc_node"),
     this->declare_parameter<double>("threshold_fitness", 0.9);
     this->declare_parameter<std::vector<double>>("initialpose", std::vector<double>());
     this->declare_parameter<double>("dis_updatemap", 1);
+    this->declare_parameter<double>("dynamic_obstacle_threshold", 0.15);
+    this->declare_parameter<bool>("publish_scan2map_dynamic", true);
 
     this->get_parameter("pcd_queue_maxsize", queue_maxsize_);
     this->get_parameter("save_scan", save_scan_);
@@ -385,6 +394,8 @@ GloabalLocalization::GloabalLocalization() : Node("global_loc_node"),
     this->get_parameter("threshold_fitness", threshold_fitness_);
     this->get_parameter("initialpose", initialpose_);
     this->get_parameter("dis_updatemap", dis_updatemap_);
+    this->get_parameter("dynamic_obstacle_threshold", dynamic_obstacle_threshold_);
+    this->get_parameter("publish_scan2map_dynamic", publish_scan2map_dynamic_);
 
     for (auto i : initialpose_)
     {
@@ -1021,6 +1032,32 @@ void GloabalLocalization::Localization()
                 mat_odom2map_ = reg_matrix;
             }
             lock_mat_odom2map_.unlock();
+
+            /// 스캔을 맵 좌표로 변환 후, 맵과 겹치지 않는 점은 동적 장애물로 색상 구분하여 /scan2map 발행
+            if (source->points_.size() > 0)
+            {
+                *pcd_scan2map = *source;
+                pcd_scan2map->Transform(mat_odom2map_);
+                if (publish_scan2map_dynamic_ && target->points_.size() > 0)
+                {
+                    const double th_sq = dynamic_obstacle_threshold_ * dynamic_obstacle_threshold_;
+                    open3d::geometry::KDTreeFlann kdtree;
+                    kdtree.SetGeometry(*target);
+                    pcd_scan2map->colors_.resize(pcd_scan2map->points_.size());
+                    std::vector<int> indices(1);
+                    std::vector<double> dists_sq(1);
+                    for (size_t i = 0; i < pcd_scan2map->points_.size(); ++i)
+                    {
+                        if (kdtree.SearchKNN(pcd_scan2map->points_[i], 1, indices, dists_sq) > 0 && dists_sq[0] <= th_sq)
+                            pcd_scan2map->colors_[i] = Eigen::Vector3d(0.5, 0.5, 0.5);
+                        else
+                            pcd_scan2map->colors_[i] = Eigen::Vector3d(1.0, 0.0, 0.0);
+                    }
+                    open3d_conversions::open3dToRos(*pcd_scan2map, scan2map_msg_, "map");
+                    scan2map_msg_.header.stamp = this->now();
+                    pub_scan2map_->publish(scan2map_msg_);
+                }
+            }
 
             // save_path
             if (save_scan_)

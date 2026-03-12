@@ -68,7 +68,7 @@ def generate_launch_description():
                 'voxelsize_fine': 0.2,
                 'threshold_fitness': 0.5,
                 'threshold_fitness_init': 0.5,
-                'loc_frequence': 2.5,
+                'loc_frequence': 1.0,
                 'save_scan': False,
                 'hidden_removal': False,
                 'maxpoints_source': 80000,
@@ -78,6 +78,8 @@ def generate_launch_description():
                 'kalman_estimatedMeasVar2': 0.02,
                 'confidence_loc_th': 0.7,
                 'dis_updatemap': 3.5,
+                'dynamic_obstacle_threshold': 0.15, # 동적물체 임계값 (m)
+                'publish_scan2map_dynamic': True, # 동적물체 색상 구분 발행 여부
                 'use_sim_time': LaunchConfiguration('use_sim_time')
             }
         ]
