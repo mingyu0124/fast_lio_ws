@@ -9,7 +9,7 @@ import sys
 import os
 
 SCRIPT_DIR = os.path.dirname(os.path.abspath(__file__))
-DEFAULT_PCD = os.path.join(SCRIPT_DIR, "test_zlimit_-0.5.pcd")
+DEFAULT_PCD = os.path.join(SCRIPT_DIR, "test_global.pcd")
 
 # 축 범위: None = 자동, [최소, 최대] = 고정 (예: [-10, 10])
 AXIS_X_RANGE = [-10.0, 10.0]  # 예: [-5.0, 5.0]
