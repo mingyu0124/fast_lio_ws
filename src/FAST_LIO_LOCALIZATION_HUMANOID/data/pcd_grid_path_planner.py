@@ -8,10 +8,21 @@
 - 시작/목표를 받아 Theta* 경로 생성
 
 사용 예:
-  python3 pcd_grid_path_planner.py \
-    test_global.pcd \
-    --start -0.0 -0.0 \
-    --goal 2.0 -4.5
+python3 pcd_grid_path_planner.py \
+  test_global.pcd \
+  --start 0.0 0.0 \
+  --goal 2.0 -4.5 \
+  --max-obstacle-cells 1000 \
+  --out-debug-html out_debug.html
+
+
+python3 pcd_grid_path_planner.py \
+  table_scene_final_negYZ.pcd \
+  --start 0.0 0.0 \
+  --goal 2.0 -4.5 \
+  --max-obstacle-cells 200 \
+  --out-debug-html out_debug.html
+
 
 출력:
   - 장애물 요약: out_obstacles.json (옵션)
@@ -202,6 +213,79 @@ class ObstacleSummary:
     cell_count: int
 
 
+def _convex_hull_2d(points: np.ndarray) -> np.ndarray:
+    """
+    2D 점 집합의 볼록 껍질을 Monotone chain 알고리즘으로 계산.
+    입력: (N,2) np.ndarray
+    출력: (M,2) np.ndarray (시계/반시계 정렬, 시작/끝 점 동일하게 닫지는 않음)
+    """
+    pts = np.asarray(points, dtype=np.float64)
+    if pts.ndim != 2 or pts.shape[1] != 2:
+        raise ValueError("points는 (N,2) 형태여야 합니다.")
+    # 중복 제거
+    if len(pts) == 0:
+        return pts
+    pts = np.unique(pts, axis=0)
+    if len(pts) <= 1:
+        return pts
+
+    # x, 그 다음 y 기준 정렬
+    pts_sorted = pts[np.lexsort((pts[:, 1], pts[:, 0]))]
+
+    def cross(o: np.ndarray, a: np.ndarray, b: np.ndarray) -> float:
+        return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
+
+    lower: List[np.ndarray] = []
+    for p in pts_sorted:
+        while len(lower) >= 2 and cross(lower[-2], lower[-1], p) <= 0:
+            lower.pop()
+        lower.append(p)
+
+    upper: List[np.ndarray] = []
+    for p in reversed(pts_sorted):
+        while len(upper) >= 2 and cross(upper[-2], upper[-1], p) <= 0:
+            upper.pop()
+        upper.append(p)
+
+    # 마지막 점은 중복이므로 제거
+    hull = np.concatenate([lower[:-1], upper[:-1]], axis=0)
+    return hull
+
+
+def compute_obstacle_hulls(labels: np.ndarray, spec: GridSpec) -> List[Dict[str, object]]:
+    """
+    각 장애물(cluster id별) 그리드 셀의 중심 점들을 이용해서
+    볼록 껍질(외곽 선)을 world 좌표계에서 계산.
+
+    returns:
+      [{"id": cid, "hull": [[x0,y0], [x1,y1], ...]}, ...]
+    """
+    h, w = labels.shape
+    if h != spec.height or w != spec.width:
+        raise ValueError("labels와 GridSpec 크기가 일치하지 않습니다.")
+
+    max_id = int(labels.max())
+    if max_id <= 0:
+        return []
+
+    hulls: List[Dict[str, object]] = []
+    for cid in range(1, max_id + 1):
+        ys, xs = np.nonzero(labels == cid)
+        if xs.size == 0:
+            continue
+        # 각 occupied 셀의 중심을 world 좌표로 변환
+        wx = spec.origin_x + (xs.astype(np.float64) + 0.5) * spec.resolution
+        wy = spec.origin_y + (ys.astype(np.float64) + 0.5) * spec.resolution
+        pts = np.column_stack([wx, wy])
+        if pts.shape[0] < 3:
+            # 점이 2개 이하라면 그대로 사용
+            hull_pts = pts
+        else:
+            hull_pts = _convex_hull_2d(pts)
+        hulls.append({"id": cid, "hull": hull_pts.tolist()})
+    return hulls
+
+
 def cluster_obstacles_region_growing(occ: np.ndarray) -> np.ndarray:
     """
     이어지는 occupied 셀을 하나의 장애물로, 떨어진 덩어리는 서로 다른 장애물로 구분.
@@ -229,6 +313,69 @@ def cluster_obstacles_region_growing(occ: np.ndarray) -> np.ndarray:
                         labels[ny, nx] = cid
                         q.append((ny, nx))
     return labels
+
+
+def subdivide_obstacles_by_size(
+    labels: np.ndarray,
+    max_cells_per_subcluster: int,
+) -> np.ndarray:
+    """
+    큰 장애물 클러스터를 여러 개의 작은 연결 성분으로 다시 쪼갠다.
+
+    - 입력 labels: (H,W) int32, 0=free, 1..K=클러스터 id
+    - max_cells_per_subcluster: 한 서브 클러스터가 가질 수 있는 최대 셀 수
+
+    아이디어:
+      한 클러스터(id)를 대상으로, 아직 배정되지 않은 셀에서 BFS를 시작하되
+      방문 셀 수가 max_cells_per_subcluster를 넘으면 큐에 남은 셀을
+      다음 서브 클러스터로 넘기면서 같은 방식으로 반복한다.
+      이렇게 하면 긴 벽 모양 장애물이 둘레를 따라 여러 조각으로 잘려 나간다.
+    """
+    if max_cells_per_subcluster <= 0:
+        return labels
+
+    h, w = labels.shape
+    new_labels = np.zeros_like(labels, dtype=np.int32)
+    next_id = 0
+
+    nbrs = [(-1, 0), (1, 0), (0, -1), (0, 1), (-1, -1), (-1, 1), (1, -1), (1, 1)]
+
+    max_orig_id = int(labels.max())
+    for orig_id in range(1, max_orig_id + 1):
+        # 해당 원본 클러스터에 속한 셀들 중, 아직 새 id가 없는 것들만 대상으로 반복
+        while True:
+            ys, xs = np.nonzero((labels == orig_id) & (new_labels == 0))
+            if xs.size == 0:
+                break
+
+            # 아직 배정되지 않은 셀 하나에서 BFS 시작
+            sy, sx = int(ys[0]), int(xs[0])
+            next_id += 1
+            q: Deque[Tuple[int, int]] = deque()
+            q.append((sy, sx))
+            new_labels[sy, sx] = next_id
+            count = 1
+
+            while q:
+                cy, cx = q.popleft()
+                if count >= max_cells_per_subcluster:
+                    # 현재 서브 클러스터의 크기를 제한하기 위해,
+                    # 큐에 남아 있던 셀들은 다음 서브 클러스터에서 사용
+                    q.clear()
+                    break
+                for dy, dx in nbrs:
+                    ny, nx = cy + dy, cx + dx
+                    if not (0 <= ny < h and 0 <= nx < w):
+                        continue
+                    if labels[ny, nx] != orig_id:
+                        continue
+                    if new_labels[ny, nx] != 0:
+                        continue
+                    new_labels[ny, nx] = next_id
+                    count += 1
+                    q.append((ny, nx))
+
+    return new_labels
 
 
 def summarize_obstacles(labels: np.ndarray, spec: GridSpec) -> List[ObstacleSummary]:
@@ -405,6 +552,7 @@ def _try_write_debug_html(
     goal_w: Tuple[float, float],
     path_world: Optional[List[Tuple[float, float]]],
     labels: Optional[np.ndarray] = None,
+    obstacle_hulls: Optional[List[Dict[str, object]]] = None,
 ) -> bool:
     try:
         import plotly.graph_objects as go
@@ -455,6 +603,27 @@ def _try_write_debug_html(
                     mode="markers",
                     marker=dict(size=4, color=color, opacity=0.85, line=dict(width=0)),
                     name=f"obstacle {cid}",
+                )
+            )
+
+    # 장애물 외곽선(볼록 껍질)을 선으로 표시
+    if obstacle_hulls:
+        for item in obstacle_hulls:
+            cid = int(item.get("id", -1))
+            hull = np.asarray(item.get("hull", []), dtype=np.float64)
+            if hull.ndim != 2 or hull.shape[0] < 2:
+                continue
+            # 폐곡선이 되도록 시작점을 한 번 더 추가
+            xs = hull[:, 0].tolist() + [hull[0, 0]]
+            ys = hull[:, 1].tolist() + [hull[0, 1]]
+            color = grid_colors[(cid - 1) % len(grid_colors)] if cid > 0 else "black"
+            fig.add_trace(
+                go.Scattergl(
+                    x=xs,
+                    y=ys,
+                    mode="lines",
+                    line=dict(width=3, color=color),
+                    name=f"obstacle {cid} hull",
                 )
             )
 
@@ -518,6 +687,13 @@ def main() -> None:
     parser.add_argument("--out", type=str, default="out_path.json", help="경로 출력 JSON (기본 out_path.json)")
     parser.add_argument("--out-obstacles", type=str, default="out_obstacles.json", help="장애물 요약 JSON 출력 (옵션)")
     parser.add_argument("--out-debug-html", type=str, default="out_debug.html", help="디버그 HTML 출력 (plotly 필요)")
+    parser.add_argument(
+        "--max-obstacle-cells",
+        type=int,
+        default=0,
+        help="장애물 하나가 가질 수 있는 최대 셀 수. "
+        "0 이하면 분할하지 않음. 값이 작을수록 하나의 큰 장애물이 여러 조각으로 잘게 나뉨.",
+    )
     args = parser.parse_args()
 
     pcd_path = args.pcd
@@ -531,11 +707,21 @@ def main() -> None:
         raise SystemExit("PCD 포인트가 비어 있습니다.")
 
     xy = xyz[:, :2].astype(np.float32, copy=False)  # Step2: Z 무시 (투영)
-    occ, spec = build_occupancy_grid(xy, resolution=args.resolution, padding=args.padding, bounds=tuple(args.bounds) if args.bounds else None)
+    occ, spec = build_occupancy_grid(
+        xy,
+        resolution=args.resolution,
+        padding=args.padding,
+        bounds=tuple(args.bounds) if args.bounds else None,
+    )
 
     # 장애물 군집화: robot_radius 없이 원본 그리드만으로 이어진 셀 = 하나의 장애물
     labels = cluster_obstacles_region_growing(occ)
+    # 옵션에 따라 큰 장애물을 여러 개의 작은 서브 클러스터로 분할
+    if int(args.max_obstacle_cells) > 0:
+        labels = subdivide_obstacles_by_size(labels, max_cells_per_subcluster=int(args.max_obstacle_cells))
     summaries = summarize_obstacles(labels, spec)
+    obstacle_hulls = compute_obstacle_hulls(labels, spec)
+    hull_dict = {int(item["id"]): item.get("hull", []) for item in obstacle_hulls}
 
     # 경로 계획용만 robot_radius 반영 (팽창)
     if args.robot_radius > 0:
@@ -587,9 +773,11 @@ def main() -> None:
                 "bbox_min": [s.bbox_min[0], s.bbox_min[1]],
                 "bbox_max": [s.bbox_max[0], s.bbox_max[1]],
                 "cell_count": s.cell_count,
+                "hull": hull_dict.get(s.id, None),
             }
             for s in summaries
         ],
+        "obstacle_hulls": obstacle_hulls,
     }
 
     _write_json(args.out, out_obj)
@@ -597,7 +785,18 @@ def main() -> None:
     if args.out_obstacles:
         _write_json(
             args.out_obstacles,
-            [{"id": s.id, "center": s.center, "size": s.size, "bbox_min": s.bbox_min, "bbox_max": s.bbox_max, "cell_count": s.cell_count} for s in summaries],
+            [
+                {
+                    "id": s.id,
+                    "center": s.center,
+                    "size": s.size,
+                    "bbox_min": s.bbox_min,
+                    "bbox_max": s.bbox_max,
+                    "cell_count": s.cell_count,
+                    "hull": hull_dict.get(s.id, None),
+                }
+                for s in summaries
+            ],
         )
 
     if args.out_debug_html:
@@ -610,6 +809,7 @@ def main() -> None:
             goal_w=goal_w,
             path_world=path_world,
             labels=labels,
+            obstacle_hulls=obstacle_hulls,
         )
         if ok:
             try:
