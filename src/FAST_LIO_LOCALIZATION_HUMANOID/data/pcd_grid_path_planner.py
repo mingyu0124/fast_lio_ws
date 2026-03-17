@@ -1,33 +1,23 @@
 #!/usr/bin/env python3
 """
-2D PCD(혹은 3D PCD에서 Z 무시)로부터
-- 3D->2D 투영(=Z 무시)
-- 2D Occupancy Grid 생성
-- 장애물 군집화(8-neighborhood region-growing)
-- 장애물 요약(바운딩 박스/중심/크기)
-- 시작/목표를 받아 Theta* 경로 생성
+2D PCD로부터 다각형 장애물을 추출하고, 가시 그래프(visibility graph)로 경로를 생성합니다.
 
-사용 예:
-python3 pcd_grid_path_planner.py \
-  test_global.pcd \
-  --start 0.0 0.0 \
-  --goal 2.0 -4.5 \
-  --max-obstacle-cells 1000 \
-  --out-debug-html out_debug.html
+흐름:
+- 3D PCD → 2D 투영 (Z 무시)
+- 2D Occupancy Grid → 장애물 군집화(8-neighborhood) → 볼록 껍질(hull) 다각형
+- (옵션) 큰 장애물을 --max-obstacle-cells 기준으로 세분화
+- 장애물 다각형을 --robot-radius 만큼 팽창 후 가시 그래프 구축
+- 시작/목표 사이 최단 경로 (world 좌표) 계산
 
+사용 예 (한 줄로 실행, 백슬래시 줄나눔 없이):
+  python3 pcd_grid_path_planner.py test_global.pcd --start 0.0 0.0 --goal 0.0 -5.0 --max-obstacle-cells 100 --out-debug-html out_debug.html
 
-python3 pcd_grid_path_planner.py \
-  table_scene_final_negYZ.pcd \
-  --start 0.0 0.0 \
-  --goal 2.0 -4.5 \
-  --max-obstacle-cells 200 \
-  --out-debug-html out_debug.html
 
 
 출력:
+  - 경로: out_path.json (world 좌표)
   - 장애물 요약: out_obstacles.json (옵션)
-  - 경로: out_path.json (grid/world 좌표 포함)
-  - 시각화: out_debug.html (plotly 설치 시)
+  - 시각화: out_debug.html (plotly 필요)
 """
 
 from __future__ import annotations
@@ -38,7 +28,7 @@ import math
 import os
 from collections import deque
 from dataclasses import dataclass
-from typing import Deque, Dict, Iterable, List, Optional, Sequence, Tuple
+from typing import Deque, Dict, List, Optional, Sequence, Tuple
 
 import numpy as np
 
@@ -176,31 +166,6 @@ def build_occupancy_grid(
         lin = np.unique(lin)
         occ.flat[lin] = True
     return occ, spec
-
-
-def dilate_occupancy(occ: np.ndarray, radius_cells: int) -> np.ndarray:
-    """로봇 반경 등을 반영하기 위한 간단한 팽창(Manhattan/원형 근사)."""
-    if radius_cells <= 0:
-        return occ
-    h, w = occ.shape
-    out = occ.copy()
-    ys, xs = np.nonzero(occ)
-    if len(xs) == 0:
-        return out
-
-    rr = radius_cells
-    for y, x in zip(ys.tolist(), xs.tolist()):
-        y0 = max(0, y - rr)
-        y1 = min(h - 1, y + rr)
-        x0 = max(0, x - rr)
-        x1 = min(w - 1, x + rr)
-        for yy in range(y0, y1 + 1):
-            dy = yy - y
-            max_dx = int(math.floor(math.sqrt(max(0, rr * rr - dy * dy))))
-            xx0 = max(x0, x - max_dx)
-            xx1 = min(x1, x + max_dx)
-            out[yy, xx0 : xx1 + 1] = True
-    return out
 
 
 @dataclass
@@ -418,124 +383,276 @@ def summarize_obstacles(labels: np.ndarray, spec: GridSpec) -> List[ObstacleSumm
     return summaries
 
 
-def theta_star_grid(
-    occ: np.ndarray,
-    start: Tuple[int, int],
-    goal: Tuple[int, int],
-    allow_diag: bool = True,
-    neighbor_radius_cells: int = 1,
-) -> Optional[List[Tuple[int, int]]]:
+# ----- 다각형 기반 가시 그래프 경로 생성용 기하 유틸 -----
+
+
+def _segment_intersect(
+    p1: Tuple[float, float], p2: Tuple[float, float],
+    q1: Tuple[float, float], q2: Tuple[float, float],
+) -> bool:
+    """두 선분 p1-p2, q1-q2가 교차하는지 (끝점에서 만나는 것도 교차로 간주)."""
+    def orient(a: Tuple[float, float], b: Tuple[float, float], c: Tuple[float, float]) -> float:
+        return (b[0] - a[0]) * (c[1] - a[1]) - (b[1] - a[1]) * (c[0] - a[0])
+
+    def on_segment(a: Tuple[float, float], b: Tuple[float, float], c: Tuple[float, float]) -> bool:
+        return (min(a[0], b[0]) - 1e-9 <= c[0] <= max(a[0], b[0]) + 1e-9 and
+                min(a[1], b[1]) - 1e-9 <= c[1] <= max(a[1], b[1]) + 1e-9)
+
+    o1, o2 = orient(p1, p2, q1), orient(p1, p2, q2)
+    o3, o4 = orient(q1, q2, p1), orient(q1, q2, p2)
+    if o1 * o2 < 0 and o3 * o4 < 0:
+        return True
+    if abs(o1) < 1e-9 and on_segment(p1, p2, q1):
+        return True
+    if abs(o2) < 1e-9 and on_segment(p1, p2, q2):
+        return True
+    if abs(o3) < 1e-9 and on_segment(q1, q2, p1):
+        return True
+    if abs(o4) < 1e-9 and on_segment(q1, q2, p2):
+        return True
+    return False
+
+
+def _point_in_polygon(pt: Tuple[float, float], poly: Sequence[Sequence[float]]) -> bool:
+    """점이 다각형 내부(또는 경계)에 있는지 ray-casting으로 검사."""
+    x, y = pt
+    n = len(poly)
+    if n < 3:
+        return False
+    inside = False
+    for i in range(n):
+        x1, y1 = poly[i]
+        x2, y2 = poly[(i + 1) % n]
+        # 경계 위인지
+        if abs((x2 - x1) * (y - y1) - (y2 - y1) * (x - x1)) < 1e-9:
+            if min(x1, x2) - 1e-9 <= x <= max(x1, x2) + 1e-9 and min(y1, y2) - 1e-9 <= y <= max(y1, y2) + 1e-9:
+                return True
+        if (y1 > y) != (y2 > y):
+            t = (y - y1) / (y2 - y1 + 1e-15)
+            x_int = x1 + t * (x2 - x1)
+            if x_int > x:
+                inside = not inside
+    return inside
+
+
+def _point_segment_distance(pt: Tuple[float, float], a: Tuple[float, float], b: Tuple[float, float]) -> float:
+    """점과 선분 a-b 사이 최소 거리."""
+    px, py = pt
+    ax, ay = a
+    bx, by = b
+    vx, vy = bx - ax, by - ay
+    wx, wy = px - ax, py - ay
+    denom = vx * vx + vy * vy
+    if denom < 1e-15:
+        return math.hypot(px - ax, py - ay)
+    t = (wx * vx + wy * vy) / denom
+    t = max(0.0, min(1.0, t))
+    cx, cy = ax + t * vx, ay + t * vy
+    return math.hypot(px - cx, py - cy)
+
+
+def _segment_segment_distance(
+    p1: Tuple[float, float], p2: Tuple[float, float],
+    q1: Tuple[float, float], q2: Tuple[float, float],
+) -> float:
+    """두 선분 사이 최소 거리. 교차 시 0."""
+    if _segment_intersect(p1, p2, q1, q2):
+        return 0.0
+    return min(
+        _point_segment_distance(p1, q1, q2),
+        _point_segment_distance(p2, q1, q2),
+        _point_segment_distance(q1, p1, p2),
+        _point_segment_distance(q2, p1, p2),
+    )
+
+
+def _inflate_convex_polygon(
+    poly: Sequence[Sequence[float]],
+    r: float,
+) -> List[Tuple[float, float]]:
     """
-    Theta*: Any-angle grid path planning.
-    탐색 중 neighbor를 current가 아니라 current의 parent로 직접 연결(LOS 가능 시)하여
-    지그재그를 줄이고 직선에 가까운 경로를 유도합니다.
+    볼록 다각형을 바깥으로 r만큼 팽창한 꼭짓점 리스트 반환.
+    CCW 또는 CW 모두: 각 edge를 바깥 방향으로 r 밀어서 생기는 새 꼭짓점을 구함.
     """
-    h, w = occ.shape
-    sx, sy = start
-    gx, gy = goal
-    if not (0 <= sx < w and 0 <= sy < h and 0 <= gx < w and 0 <= gy < h):
-        return None
-    if occ[sy, sx] or occ[gy, gx]:
-        return None
+    if r <= 0.0 or len(poly) < 3:
+        return [(float(p[0]), float(p[1])) for p in poly]
+    n = len(poly)
+    out: List[Tuple[float, float]] = []
+    for i in range(n):
+        a = (float(poly[(i - 1) % n][0]), float(poly[(i - 1) % n][1]))
+        b = (float(poly[i][0]), float(poly[i][1]))
+        c = (float(poly[(i + 1) % n][0]), float(poly[(i + 1) % n][1]))
+        e1 = (b[0] - a[0], b[1] - a[1])
+        e2 = (c[0] - b[0], c[1] - b[1])
+        L1 = math.hypot(e1[0], e1[1])
+        L2 = math.hypot(e2[0], e2[1])
+        if L1 < 1e-12 or L2 < 1e-12:
+            out.append(b)
+            continue
+        # 바깥 법선: 다각형이 CCW면 왼쪽이 내부 -> 법선은 (e.y, -e.x) 방향이 바깥
+        n1 = (e1[1] / L1, -e1[0] / L1)
+        n2 = (e2[1] / L2, -e2[0] / L2)
+        # 시계 방향이면 반대로
+        cross = e1[0] * e2[1] - e1[1] * e2[0]
+        if cross < 0:
+            n1 = (-n1[0], -n1[1])
+            n2 = (-n2[0], -n2[1])
+        p1 = (a[0] + r * n1[0], a[1] + r * n1[1])
+        p2 = (b[0] + r * n1[0], b[1] + r * n1[1])
+        q1 = (b[0] + r * n2[0], b[1] + r * n2[1])
+        q2 = (c[0] + r * n2[0], c[1] + r * n2[1])
+        # 직선 p1-p2 와 q1-q2 의 교점
+        dx1, dy1 = p2[0] - p1[0], p2[1] - p1[1]
+        dx2, dy2 = q2[0] - q1[0], q2[1] - q1[1]
+        det = dx1 * dy2 - dy1 * dx2
+        if abs(det) < 1e-12:
+            out.append((b[0] + r * n1[0], b[1] + r * n1[1]))
+            continue
+        t = ((q1[0] - p1[0]) * dy2 - (q1[1] - p1[1]) * dx2) / det
+        px = p1[0] + t * dx1
+        py = p1[1] + t * dy1
+        out.append((px, py))
+    return out
 
-    if neighbor_radius_cells < 1:
-        neighbor_radius_cells = 1
 
-    def make_neighbor_offsets(radius: int, diag: bool) -> List[Tuple[int, int]]:
-        offsets: List[Tuple[int, int]] = []
-        for dy in range(-radius, radius + 1):
-            for dx in range(-radius, radius + 1):
-                if dx == 0 and dy == 0:
-                    continue
-                if not diag and (dx != 0 and dy != 0):
-                    continue
-                offsets.append((dx, dy))
-        return offsets
+def build_visibility_graph_with_radius(
+    obstacle_hulls: List[Dict[str, object]],
+    start_w: Tuple[float, float],
+    goal_w: Tuple[float, float],
+    robot_radius: float = 0.0,
+) -> Tuple[List[Tuple[float, float]], List[List[Tuple[int, float]]]]:
+    """
+    다각형 장애물 기준 가시 그래프 구축.
 
-    nbrs = make_neighbor_offsets(neighbor_radius_cells, allow_diag)
+    원리:
+      - 노드 = 시작점, 목표점, (팽창된) 장애물 꼭짓점들.
+      - 두 노드가 '서로 보인다' = 그 사이 직선이 어떤 장애물 내부도 통과하지 않고
+        어떤 장애물 변과도 교차하지 않음 (끝점에서 맞닿는 것은 허용).
+      - robot_radius > 0 이면: 먼저 각 장애물 다각형을 바깥으로 robot_radius 만큼
+        팽창(inflate)한 뒤, 이 팽창된 다각형을 장애물로 해서 위 조건으로 가시 그래프를
+        만든다. 이렇게 하면 경로는 원래 장애물에서 최소 robot_radius 만큼 떨어지게 됨.
 
-    def bresenham_cells(x0: int, y0: int, x1: int, y1: int) -> Iterable[Tuple[int, int]]:
-        dx = abs(x1 - x0)
-        dy = -abs(y1 - y0)
-        sx_ = 1 if x0 < x1 else -1
-        sy_ = 1 if y0 < y1 else -1
-        err = dx + dy
-        x, y = x0, y0
-        while True:
-            yield x, y
-            if x == x1 and y == y1:
-                break
-            e2 = 2 * err
-            if e2 >= dy:
-                err += dy
-                x += sx_
-            if e2 <= dx:
-                err += dx
-                y += sy_
+    returns: (nodes, adj)  nodes[0]=start, nodes[1]=goal, 이후 (팽창된) hull 꼭짓점. adj[i] = [(j, cost), ...]
+    """
+    # robot_radius > 0 이면 장애물을 팽창한 다각형을 사용 (그래프 노드/가시성 모두 팽창된 것 기준)
+    use_inflated = robot_radius > 0.0
+    polys: List[List[Tuple[float, float]]] = []
+    for item in obstacle_hulls:
+        hull = np.asarray(item.get("hull", []), dtype=np.float64)
+        if hull.ndim != 2 or hull.shape[0] < 3:
+            continue
+        poly_list = [(float(hull[k, 0]), float(hull[k, 1])) for k in range(hull.shape[0])]
+        if use_inflated:
+            poly_list = _inflate_convex_polygon(poly_list, robot_radius)
+        polys.append(poly_list)
 
-    def segment_is_free(x0: int, y0: int, x1: int, y1: int) -> bool:
-        first = True
-        for x, y in bresenham_cells(x0, y0, x1, y1):
-            if first:
-                first = False
-                continue
-            if not (0 <= x < w and 0 <= y < h):
+    nodes: List[Tuple[float, float]] = [tuple(start_w), tuple(goal_w)]
+    for poly in polys:
+        for pt in poly:
+            nodes.append(pt)
+
+    n_nodes = len(nodes)
+    adj: List[List[Tuple[int, float]]] = [[] for _ in range(n_nodes)]
+
+    def visible(i: int, j: int) -> bool:
+        p, q = nodes[i], nodes[j]
+        if p == q:
+            return False
+        # 세그먼트 중간점이 어떤 (팽창된) 다각형 내부에 있으면 비가시
+        mid = ((p[0] + q[0]) * 0.5, (p[1] + q[1]) * 0.5)
+        for poly in polys:
+            if _point_in_polygon(mid, poly):
                 return False
-            if occ[y, x]:
-                return False
+        # 세그먼트가 어떤 다각형의 변과 교차하면 비가시 (끝점이 그 변의 끝이면 허용)
+        for poly in polys:
+            m = len(poly)
+            for k in range(m):
+                a, b = poly[k], poly[(k + 1) % m]
+                if _segment_intersect(p, q, a, b):
+                    if (p == a or p == b or q == a or q == b):
+                        continue
+                    return False
         return True
 
-    def heuristic(ax: int, ay: int) -> float:
-        dx = abs(ax - gx)
-        dy = abs(ay - gy)
-        return math.hypot(dx, dy)
+    for i in range(n_nodes):
+        for j in range(i + 1, n_nodes):
+            if not visible(i, j):
+                continue
+            cost = float(math.hypot(nodes[i][0] - nodes[j][0], nodes[i][1] - nodes[j][1]))
+            adj[i].append((j, cost))
+            adj[j].append((i, cost))
+    return nodes, adj
 
+
+def shortest_path_visibility_graph(
+    nodes: List[Tuple[float, float]],
+    adj: List[List[Tuple[int, float]]],
+    start_idx: int,
+    goal_idx: int,
+) -> Optional[List[Tuple[float, float]]]:
+    """가시 그래프 위에서 A*로 최단 경로 (world 좌표 리스트)."""
     import heapq
+    n = len(nodes)
+    if not (0 <= start_idx < n and 0 <= goal_idx < n):
+        return None
+    g_score = [float("inf")] * n
+    g_score[start_idx] = 0.0
+    parent: Dict[int, int] = {}
+    open_heap: List[Tuple[float, int]] = []
+    heapq.heappush(open_heap, (0.0, start_idx))
+    closed = [False] * n
 
-    open_heap: List[Tuple[float, int, int]] = []
-    heapq.heappush(open_heap, (heuristic(sx, sy), sx, sy))
-
-    parent: Dict[Tuple[int, int], Tuple[int, int]] = {(sx, sy): (sx, sy)}
-    g_score = np.full((h, w), np.inf, dtype=np.float32)
-    g_score[sy, sx] = 0.0
-    closed = np.zeros((h, w), dtype=bool)
+    def h(i: int) -> float:
+        return math.hypot(nodes[i][0] - nodes[goal_idx][0], nodes[i][1] - nodes[goal_idx][1])
 
     while open_heap:
-        _, cx, cy = heapq.heappop(open_heap)
-        if closed[cy, cx]:
+        _, cur = heapq.heappop(open_heap)
+        if closed[cur]:
             continue
-        if (cx, cy) == (gx, gy):
-            path = [(cx, cy)]
-            while (cx, cy) != (sx, sy):
-                cx, cy = parent[(cx, cy)]
-                path.append((cx, cy))
-            path.reverse()
-            return path
-        closed[cy, cx] = True
-
-        for dx, dy in nbrs:
-            nx, ny = cx + dx, cy + dy
-            if not (0 <= nx < w and 0 <= ny < h):
+        closed[cur] = True
+        if cur == goal_idx:
+            path_idx = [cur]
+            while cur != start_idx:
+                cur = parent[cur]
+                path_idx.append(cur)
+            path_idx.reverse()
+            return [nodes[i] for i in path_idx]
+        for nbr, cost in adj[cur]:
+            if closed[nbr]:
                 continue
-            if closed[ny, nx] or occ[ny, nx]:
-                continue
-            if not segment_is_free(cx, cy, nx, ny):
-                continue
-
-            px, py = parent.get((cx, cy), (cx, cy))
-            if (px, py) != (cx, cy) and segment_is_free(px, py, nx, ny):
-                cand_parent = (px, py)
-                cand_g = float(g_score[py, px] + math.hypot(nx - px, ny - py))
-            else:
-                cand_parent = (cx, cy)
-                cand_g = float(g_score[cy, cx] + math.hypot(dx, dy))
-
-            if cand_g < float(g_score[ny, nx]):
-                g_score[ny, nx] = cand_g
-                parent[(nx, ny)] = cand_parent
-                f = cand_g + heuristic(nx, ny)
-                heapq.heappush(open_heap, (f, nx, ny))
+            cand = g_score[cur] + cost
+            if cand < g_score[nbr]:
+                g_score[nbr] = cand
+                parent[nbr] = cur
+                heapq.heappush(open_heap, (cand + h(nbr), nbr))
     return None
+
+
+def densify_path(
+    path_world: List[Tuple[float, float]],
+    interval_m: float,
+) -> List[Tuple[float, float]]:
+    """
+    경로의 각 직선 구간을 따라 지정한 거리(interval_m)마다 점을 보간하여 반환.
+    interval_m <= 0 이면 원본 경로를 그대로 반환.
+    """
+    if not path_world or interval_m <= 0.0:
+        return path_world
+    if len(path_world) == 1:
+        return list(path_world)
+    result: List[Tuple[float, float]] = [path_world[0]]
+    for i in range(len(path_world) - 1):
+        ax, ay = path_world[i]
+        bx, by = path_world[i + 1]
+        d = math.hypot(bx - ax, by - ay)
+        if d < 1e-9:
+            continue
+        n = max(1, int(math.ceil(d / interval_m)))
+        for j in range(1, n):
+            t = j / n
+            result.append((ax + t * (bx - ax), ay + t * (by - ay)))
+        result.append((bx, by))
+    return result
 
 
 def _write_json(path: str, obj: object) -> None:
@@ -658,7 +775,7 @@ def _try_write_debug_html(
         )
 
     fig.update_layout(
-        title="Map (PCD xy) + obstacles (grid) + path (world XY)",
+        title="PCD + 장애물 다각형 + 경로 (world XY)",
         xaxis_title="x [m]",
         yaxis_title="y [m]",
         yaxis=dict(scaleanchor="x", scaleratio=1),
@@ -669,21 +786,15 @@ def _try_write_debug_html(
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="PCD 기반 2D 그리드 경로 생성기")
+    parser = argparse.ArgumentParser(description="PCD 기반 2D 다각형 가시 그래프 경로 생성기")
     parser.add_argument("pcd", help="입력 PCD 경로")
-    parser.add_argument("--resolution", type=float, default=0.05, help="그리드 해상도 [m] (기본 0.05)")
+    parser.add_argument("--resolution", type=float, default=0.1, help="장애물 추출용 그리드 해상도 [m] (기본 0.05)")
     parser.add_argument("--padding", type=float, default=0.5, help="포인트 bbox 외곽 패딩 [m] (기본 0.5)")
     parser.add_argument("--bounds", type=float, nargs=4, default=None, metavar=("MIN_X", "MAX_X", "MIN_Y", "MAX_Y"), help="그리드 bounds 고정")
-    parser.add_argument("--robot-radius", type=float, default=0.25, help="장애물 팽창 반경 [m] (기본 0.25)")
+    parser.add_argument("--robot-radius", type=float, default=0.10, help="다각형 팽창 반경 [m] (장애물에서 이만큼 떨어진 경로, 기본 0.15)")
+    parser.add_argument("--path-point-interval", type=float, default=0.1, help="경로를 저장/시각화할 때 이 거리[m]마다 점을 보간 (0이면 꺾이는 지점만). 기본 0.1")
     parser.add_argument("--start", type=float, nargs=2, required=True, metavar=("X", "Y"), help="시작점 world 좌표 [m]")
     parser.add_argument("--goal", type=float, nargs=2, required=True, metavar=("X", "Y"), help="목표점 world 좌표 [m]")
-    parser.add_argument("--no-diag", action="store_true", help="Theta*에서 대각 이동 금지")
-    parser.add_argument(
-        "--neighbor-radius-cells",
-        type=int,
-        default=1,
-        help="Theta* 이웃 탐색 반경(셀 단위). 1=8방향, 2=24방향 근사 (기본 1)",
-    )
     parser.add_argument("--out", type=str, default="out_path.json", help="경로 출력 JSON (기본 out_path.json)")
     parser.add_argument("--out-obstacles", type=str, default="out_obstacles.json", help="장애물 요약 JSON 출력 (옵션)")
     parser.add_argument("--out-debug-html", type=str, default="out_debug.html", help="디버그 HTML 출력 (plotly 필요)")
@@ -723,27 +834,19 @@ def main() -> None:
     obstacle_hulls = compute_obstacle_hulls(labels, spec)
     hull_dict = {int(item["id"]): item.get("hull", []) for item in obstacle_hulls}
 
-    # 경로 계획용만 robot_radius 반영 (팽창)
-    if args.robot_radius > 0:
-        radius_cells = int(math.ceil(args.robot_radius / spec.resolution))
-        occ = dilate_occupancy(occ, radius_cells=radius_cells)
-
     start_w = (float(args.start[0]), float(args.start[1]))
     goal_w = (float(args.goal[0]), float(args.goal[1]))
-    start_g = spec.world_to_grid(*start_w)
-    goal_g = spec.world_to_grid(*goal_w)
 
-    path_g = theta_star_grid(
-        occ,
-        start=start_g,
-        goal=goal_g,
-        allow_diag=not args.no_diag,
-        neighbor_radius_cells=int(args.neighbor_radius_cells),
+    # 다각형 가시 그래프로 경로 생성 (robot_radius = 다각형 팽창 반경)
+    nodes, adj = build_visibility_graph_with_radius(
+        obstacle_hulls,
+        start_w=start_w,
+        goal_w=goal_w,
+        robot_radius=max(0.0, float(args.robot_radius)),
     )
-    if path_g is None:
-        path_world: Optional[List[Tuple[float, float]]] = None
-    else:
-        path_world = [spec.grid_to_world_center(gx, gy) for gx, gy in path_g]
+    path_world = shortest_path_visibility_graph(nodes, adj, start_idx=0, goal_idx=1)
+    if path_world and args.path_point_interval > 0:
+        path_world = densify_path(path_world, interval_m=float(args.path_point_interval))
 
     out_obj: Dict[str, object] = {
         "pcd": pcd_path,
@@ -753,16 +856,12 @@ def main() -> None:
             "width": spec.width,
             "height": spec.height,
         },
-        "planner": {
-            "name": "theta",
-            "allow_diag": not args.no_diag,
-            "neighbor_radius_cells": int(args.neighbor_radius_cells),
-        },
-        "start": {"world": [start_w[0], start_w[1]], "grid": [start_g[0], start_g[1]]},
-        "goal": {"world": [goal_w[0], goal_w[1]], "grid": [goal_g[0], goal_g[1]]},
+        "planner": {"name": "visibility", "robot_radius": float(args.robot_radius)},
+        "path_point_interval": float(args.path_point_interval),
+        "start": {"world": [start_w[0], start_w[1]]},
+        "goal": {"world": [goal_w[0], goal_w[1]]},
         "path": {
             "found": path_world is not None,
-            "grid": [[gx, gy] for (gx, gy) in path_g] if path_g else None,
             "world": [[x, y] for (x, y) in path_world] if path_world else None,
         },
         "obstacles": [
