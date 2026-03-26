@@ -1,0 +1,10 @@
+global_localization_node:
+  ros__parameters:
+    # 목적지 목록 (map frame 기준, 단위: m)
+    # 형식 1) goals:
+    #          home: [0.0, 0.0]
+    #          dock: [1.2, -3.4]
+    goals:
+      home: [0.0, 0.0]
+      example_1: [2.0, -5.0]
+      example_2: [0.0, -5.0]

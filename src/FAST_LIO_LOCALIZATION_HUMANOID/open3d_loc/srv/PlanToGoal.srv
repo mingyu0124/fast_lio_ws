@@ -1,0 +1,7 @@
+string goal_id
+float32 robot_radius
+float32 path_point_interval
+---
+bool success
+string message
+nav_msgs/Path path

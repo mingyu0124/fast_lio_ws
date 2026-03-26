@@ -1,0 +1,8 @@
+geometry_msgs/PoseStamped start
+geometry_msgs/PoseStamped goal
+float32 robot_radius
+float32 path_point_interval
+---
+bool success
+string message
+nav_msgs/Path path
