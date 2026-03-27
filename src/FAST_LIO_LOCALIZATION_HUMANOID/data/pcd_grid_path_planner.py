@@ -7,11 +7,26 @@ localization용 point cloud 맵(PCD)은 여기서 사용하지 않습니다.
 (맵 빌드·장애물 추출은 전부 오프라인 전처리에서 끝난 상태를 가정)
 
 사용 예:
-  python3 pcd_grid_path_planner.py test_global_obstacles.json --start 0.0 0.0 --goal 0.0 -5.0
+  # visibility (기본, 보정 없음)
+  python3 pcd_grid_path_planner.py test_global_obstacles.json --start 0.0 0.0 --goal 1.0 -4.0
+
+  # visibility + Bezier 보정
+  python3 pcd_grid_path_planner.py test_global_obstacles.json --start 0.0 0.0 --goal 1.0 -4.0 --bezier-smoothing
+
+  # RRT* (트리 시각화 포함)
+  python3 pcd_grid_path_planner.py test_global_obstacles.json --planner rrt_star \
+    --start 0.0 0.0 --goal 1.0 -4.0
+
+  # RRT* + Bezier 보정
+  python3 pcd_grid_path_planner.py test_global_obstacles.json --planner rrt_star \
+    --start 0.0 0.0 --goal 1.0 -4.0 --bezier-smoothing
+
+  # planning 영역 제한
+  python3 pcd_grid_path_planner.py test_global_obstacles.json --planner rrt_star \
+    --start 0.0 0.0 --goal 3.0 -4.0 --planning-bounds -4.0 -4.0 4.0 4.0
 
 출력:
   - 경로: out_path.json (world 좌표)
-  - 장애물 요약: out_obstacles.json (옵션)
   - 시각화: out_debug.html (plotly, 옵션)
 """
 
@@ -21,10 +36,19 @@ import argparse
 import json
 import math
 import os
+import time
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Sequence, Set, Tuple
 
 import numpy as np
+from planners import (
+    PlannerRequest,
+    apply_bezier_smoothing,
+    densify_path,
+    get_bezier_smoothing_config,
+    get_rrt_star_config,
+    plan_path,
+)
 
 
 @dataclass(frozen=True)
@@ -136,118 +160,21 @@ def _is_segment_visible(
     return True
 
 
-# 역할: 정적 그래프에 시작/목표 노드를 임시 연결해 런타임 그래프를 만든다.
-def build_runtime_graph_from_static(
-    static_nodes: List[Tuple[float, float]],
-    static_adj: List[List[Tuple[int, float]]],
-    inflated_polys: List[List[Tuple[float, float]]],
-    start_w: Tuple[float, float],
-    goal_w: Tuple[float, float],
-) -> Tuple[List[Tuple[float, float]], List[List[Tuple[int, float]]], int, int]:
-    nodes = list(static_nodes)
-    adj = [[(int(j), float(c)) for (j, c) in nbrs] for nbrs in static_adj]
-    start_idx = len(nodes)
-    goal_idx = len(nodes) + 1
-    nodes.append(tuple(start_w))
-    nodes.append(tuple(goal_w))
-    adj.append([])
-    adj.append([])
-
-    def add_undirected(i: int, j: int) -> None:
-        cost = float(math.hypot(nodes[i][0] - nodes[j][0], nodes[i][1] - nodes[j][1]))
-        adj[i].append((j, cost))
-        adj[j].append((i, cost))
-
-    for i in range(start_idx):
-        if _is_segment_visible(nodes[start_idx], nodes[i], inflated_polys):
-            add_undirected(start_idx, i)
-
-    for i in range(goal_idx):
-        if i == goal_idx:
-            continue
-        if _is_segment_visible(nodes[goal_idx], nodes[i], inflated_polys):
-            add_undirected(goal_idx, i)
-
-    return nodes, adj, start_idx, goal_idx
-
-
-# 역할: 가시 그래프에서 A*로 start_idx부터 goal_idx까지 최단 경로를 찾는다.
-def shortest_path_visibility_graph(
-    nodes: List[Tuple[float, float]],
-    adj: List[List[Tuple[int, float]]],
-    start_idx: int,
-    goal_idx: int,
-) -> Optional[List[Tuple[float, float]]]:
-    """가시 그래프 위에서 A*로 최단 경로 (world 좌표 리스트)."""
-    import heapq
-    n = len(nodes)
-    if not (0 <= start_idx < n and 0 <= goal_idx < n):
-        return None
-    g_score = [float("inf")] * n
-    g_score[start_idx] = 0.0
-    parent: Dict[int, int] = {}
-    open_heap: List[Tuple[float, int]] = []
-    heapq.heappush(open_heap, (0.0, start_idx))
-    closed = [False] * n
-
-    def h(i: int) -> float:
-        return math.hypot(nodes[i][0] - nodes[goal_idx][0], nodes[i][1] - nodes[goal_idx][1])
-
-    while open_heap:
-        _, cur = heapq.heappop(open_heap)
-        if closed[cur]:
-            continue
-        closed[cur] = True
-        if cur == goal_idx:
-            path_idx = [cur]
-            while cur != start_idx:
-                cur = parent[cur]
-                path_idx.append(cur)
-            path_idx.reverse()
-            return [nodes[i] for i in path_idx]
-        for nbr, cost in adj[cur]:
-            if closed[nbr]:
-                continue
-            cand = g_score[cur] + cost
-            if cand < g_score[nbr]:
-                g_score[nbr] = cand
-                parent[nbr] = cur
-                heapq.heappush(open_heap, (cand + h(nbr), nbr))
-    return None
-
-
-# 역할: 경로 구간을 interval 간격으로 선형 보간해 점을 촘촘히 만든다.
-def densify_path(
-    path_world: List[Tuple[float, float]],
-    interval_m: float,
-) -> List[Tuple[float, float]]:
-    """
-    경로의 각 직선 구간을 따라 지정한 거리(interval_m)마다 점을 보간하여 반환.
-    interval_m <= 0 이면 원본 경로를 그대로 반환.
-    """
-    if not path_world or interval_m <= 0.0:
-        return path_world
-    if len(path_world) == 1:
-        return list(path_world)
-    result: List[Tuple[float, float]] = [path_world[0]]
-    for i in range(len(path_world) - 1):
-        ax, ay = path_world[i]
-        bx, by = path_world[i + 1]
-        d = math.hypot(bx - ax, by - ay)
-        if d < 1e-9:
-            continue
-        n = max(1, int(math.ceil(d / interval_m)))
-        for j in range(1, n):
-            t = j / n
-            result.append((ax + t * (bx - ax), ay + t * (by - ay)))
-        result.append((bx, by))
-    return result
-
-
 # 역할: 객체를 UTF-8 JSON 파일로 저장한다.
 def _write_json(path: str, obj: object) -> None:
     with open(path, "w", encoding="utf-8") as f:
         json.dump(obj, f, ensure_ascii=False, indent=2)
+
+
+def _compute_path_length(path_world: Optional[List[Tuple[float, float]]]) -> float:
+    if not path_world or len(path_world) < 2:
+        return 0.0
+    total = 0.0
+    for i in range(len(path_world) - 1):
+        ax, ay = path_world[i]
+        bx, by = path_world[i + 1]
+        total += math.hypot(bx - ax, by - ay)
+    return float(total)
 
 
 # 역할: 전처리 산출물(map_obstacles_v1) JSON을 로드하고 핵심 필드를 추출한다.
@@ -291,6 +218,7 @@ def _try_write_debug_html(
     start_w: Tuple[float, float],
     goal_w: Tuple[float, float],
     path_world: Optional[List[Tuple[float, float]]],
+    rrt_tree_edges: Optional[List[Tuple[Tuple[float, float], Tuple[float, float]]]] = None,
     obstacle_hulls: Optional[List[Dict[str, object]]] = None,
     map_xy: Optional[np.ndarray] = None,
     labels: Optional[np.ndarray] = None,
@@ -386,6 +314,21 @@ def _try_write_debug_html(
             name="goal",
         )
     )
+    if rrt_tree_edges:
+        xs: List[float] = []
+        ys: List[float] = []
+        for p, q in rrt_tree_edges:
+            xs.extend([p[0], q[0], float("nan")])
+            ys.extend([p[1], q[1], float("nan")])
+        fig.add_trace(
+            go.Scattergl(
+                x=xs,
+                y=ys,
+                mode="lines",
+                line=dict(width=1, color="lightblue"),
+                name="rrt_tree",
+            )
+        )
     if path_world:
         fig.add_trace(
             go.Scattergl(
@@ -421,8 +364,17 @@ def main() -> None:
     parser.add_argument("--path-point-interval", type=float, default=0.1, help="경로를 저장/시각화할 때 이 거리[m]마다 점을 보간 (0이면 꺾이는 지점만). 기본 0.1")
     parser.add_argument("--start", type=float, nargs=2, required=True, metavar=("X", "Y"), help="시작점 world 좌표 [m]")
     parser.add_argument("--goal", type=float, nargs=2, required=True, metavar=("X", "Y"), help="목표점 world 좌표 [m]")
+    parser.add_argument("--planner", type=str, default="visibility", choices=["visibility", "rrt_star"], help="경로 생성 알고리즘 선택")
+    parser.add_argument("--bezier-smoothing", action="store_true", help="Bezier(Chaikin) 경로 보정 적용")
+    parser.add_argument(
+        "--planning-bounds",
+        type=float,
+        nargs=4,
+        default=None,
+        metavar=("MIN_X", "MIN_Y", "MAX_X", "MAX_Y"),
+        help="플래닝 영역 bounds (미지정 시 grid bounds 사용)",
+    )
     parser.add_argument("--out", type=str, default="out_path.json", help="경로 출력 JSON (기본 out_path.json)")
-    parser.add_argument("--out-obstacles", type=str, default="out_obstacles.json", help="장애물 요약 JSON 출력 (옵션)")
     parser.add_argument("--out-debug-html", type=str, default="out_debug.html", help="디버그 HTML 출력 (plotly 필요)")
     args = parser.parse_args()
 
@@ -505,18 +457,51 @@ def main() -> None:
             continue
         inflated_polys.append([(float(hull[k, 0]), float(hull[k, 1])) for k in range(hull.shape[0])])
 
-    planner_name = "visibility_static_plus_sg"
+    planner_name = str(args.planner)
     planner_robot_radius = float(visibility_graph.get("robot_radius", 0.0))
-    nodes, adj, s_idx, g_idx = build_runtime_graph_from_static(
+    if args.planning_bounds is not None:
+        planning_bounds = (
+            float(args.planning_bounds[0]),
+            float(args.planning_bounds[1]),
+            float(args.planning_bounds[2]),
+            float(args.planning_bounds[3]),
+        )
+    else:
+        planning_bounds = (
+            float(spec.origin_x),
+            float(spec.origin_y),
+            float(spec.origin_x + spec.width * spec.resolution),
+            float(spec.origin_y + spec.height * spec.resolution),
+        )
+    obstacle_polys_for_planner = inflated_polys if inflated_polys else [
+        [(float(p[0]), float(p[1])) for p in (item.get("hull", []) if isinstance(item, dict) else [])]
+        for item in obstacle_hulls
+        if isinstance(item, dict) and isinstance(item.get("hull"), list) and len(item.get("hull", [])) >= 3
+    ]
+    req = PlannerRequest(
+        planner_name=planner_name,
+        start=start_w,
+        goal=goal_w,
+        obstacle_polygons=obstacle_polys_for_planner,
+        planning_bounds=planning_bounds,
         static_nodes=static_nodes,
         static_adj=static_adj,
-        inflated_polys=inflated_polys,
-        start_w=start_w,
-        goal_w=goal_w,
     )
-    path_world = shortest_path_visibility_graph(nodes, adj, start_idx=s_idx, goal_idx=g_idx)
+    t_plan_start = time.perf_counter()
+    plan_result = plan_path(req)
+    path_world = plan_result.path_world
+    rrt_tree_edges = plan_result.tree_edges if planner_name == "rrt_star" else None
+    smoothing_applied = False
+    smoothing_status = "disabled"
+    if args.bezier_smoothing:
+        path_world, smoothing_applied, smoothing_status = apply_bezier_smoothing(
+            path_world=path_world,
+            obstacle_polygons=obstacle_polys_for_planner,
+        )
     if path_world and args.path_point_interval > 0:
         path_world = densify_path(path_world, interval_m=float(args.path_point_interval))
+    planning_time_ms = (time.perf_counter() - t_plan_start) * 1000.0
+    path_length_m = _compute_path_length(path_world)
 
     out_obj: Dict[str, object] = {
         "obstacles_json": oj,
@@ -528,16 +513,34 @@ def main() -> None:
         },
         "planner": {
             "name": planner_name,
+            "planning_time_ms": planning_time_ms,
             "robot_radius": planner_robot_radius,
             "obstacles_from_preprocess_json": True,
-            "used_precomputed_static_graph": True,
+            "used_precomputed_static_graph": planner_name == "visibility",
+            "planning_bounds": list(planning_bounds),
+            "rrt_star": get_rrt_star_config(),
+            "smoothing": {
+                "type": "bezier" if args.bezier_smoothing else "none",
+                "applied": bool(smoothing_applied),
+                "status": smoothing_status,
+                "bezier": get_bezier_smoothing_config(),
+            },
         },
         "path_point_interval": float(args.path_point_interval),
         "start": {"world": [start_w[0], start_w[1]]},
         "goal": {"world": [goal_w[0], goal_w[1]]},
         "path": {
             "found": path_world is not None,
+            "length_m": path_length_m,
             "world": [[x, y] for (x, y) in path_world] if path_world else None,
+        },
+        "rrt_tree": {
+            "edge_count": len(rrt_tree_edges) if rrt_tree_edges else 0,
+            "edges_world": (
+                [[[p[0], p[1]], [q[0], q[1]]] for (p, q) in rrt_tree_edges]
+                if rrt_tree_edges
+                else None
+            ),
         },
         "obstacles": [
             {
@@ -555,23 +558,12 @@ def main() -> None:
     }
 
     _write_json(args.out, out_obj)
-
-    if args.out_obstacles:
-        _write_json(
-            args.out_obstacles,
-            [
-                {
-                    "id": s.id,
-                    "center": s.center,
-                    "size": s.size,
-                    "bbox_min": s.bbox_min,
-                    "bbox_max": s.bbox_max,
-                    "cell_count": s.cell_count,
-                    "hull": hull_dict.get(s.id, None),
-                }
-                for s in summaries
-            ],
-        )
+    print(
+        f"[planner] {planner_name} | found={path_world is not None} | "
+        f"planning_time={planning_time_ms:.3f} ms | path_length={path_length_m:.3f} m"
+    )
+    if args.bezier_smoothing:
+        print(f"[smoothing] bezier | applied={smoothing_applied} | status={smoothing_status}")
 
     if args.out_debug_html:
         ok = _try_write_debug_html(
@@ -579,6 +571,7 @@ def main() -> None:
             start_w=start_w,
             goal_w=goal_w,
             path_world=path_world,
+            rrt_tree_edges=rrt_tree_edges,
             obstacle_hulls=obstacle_hulls,
         )
         if ok:
